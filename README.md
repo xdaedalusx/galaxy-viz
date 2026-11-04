@@ -36,6 +36,8 @@ use `npm run view`, or drop a `graph.json` (and optionally `details.json`) onto 
 
 - Stars are papers: brightness/size = citations, colour = year (or topic). Papers *ignite* as the time
   slider reaches them and new links flash. Press Space to play.
+- Move: W/S forward/back, A/D strafe, Q/E down/up, Shift for 3x speed (speed scales with how zoomed in you
+  are). Drag to look around, scroll to zoom. Left/right arrows step the timeline.
 - Click a star, a topic, or a void in the left panel. Voids are dashed dark regions between topic pairs;
   their panel shows the evidence and says the gap is within this collection.
 - The Glow slider is the bloom strength; 0 turns it off ("clarity mode") and renders directly.

@@ -133,7 +133,7 @@
 </div>
 <div id="panel" class="hud glass" aria-live="polite"></div>
 <div id="tip" class="glass"></div>
-<div id="hint" hidden>drag to orbit · scroll to zoom · right-drag to pan · click a star</div>
+<div id="hint" hidden>W A S D to fly · Q / E down / up · Shift = faster · drag to look around · scroll to zoom · click a star</div>
 
 <div id="timeline" class="hud glass" hidden>
   <div class="top">
@@ -291,6 +291,7 @@ let focus = null; // {type:'node',i} | {type:'cluster',c} | {type:'void',k}
 let adjacency = null, citedBy = null, cites = null;
 let clusterTimes = [], nodeTimesSorted = null, edgeTimes = { cite: [], sim: [] };
 let flyAnim = null, lastInteract = 0, started = false, rafId = 0;
+const keys = new Set(); // movement keys currently held: w a s d q e shift
 let hoverIdx = -1, mouse = { x: -1, y: -1, inside: false }, screenXY = null;
 const tmpColor = new THREE.Color();
 
@@ -682,6 +683,23 @@ function frame(now) {
   const dt = Math.min(0.1, (now - lastFrame) / 1000); lastFrame = now;
   if (playing) { setTime(time + speed * dt); if (time >= maxT) setPlaying(false); }
 
+  // Free flight: W/S move along the view direction, A/D strafe, Q/E go down/up. The orbit pivot moves with
+  // the camera, so looking around (drag) and zooming still work from wherever you are. Speed scales with the
+  // distance to the pivot: fast when zoomed out, precise when close to a star.
+  if (keys.size) {
+    const f = (keys.has('w') ? 1 : 0) - (keys.has('s') ? 1 : 0), r = (keys.has('d') ? 1 : 0) - (keys.has('a') ? 1 : 0), u = (keys.has('e') ? 1 : 0) - (keys.has('q') ? 1 : 0);
+    if (f || r || u) {
+      let dx = controls.target.x - camera.position.x, dy = controls.target.y - camera.position.y, dz = controls.target.z - camera.position.z;
+      const dl = Math.hypot(dx, dy, dz) || 1; dx /= dl; dy /= dl; dz /= dl;
+      let rx = -dz, rz = dx; const rl = Math.hypot(rx, rz) || 1; rx /= rl; rz /= rl; // forward x up
+      const sp = Math.max(40, dl * 0.8) * (keys.has('shift') ? 3 : 1) * dt;
+      const mx = (dx * f + rx * r) * sp, my = (dy * f + u) * sp, mz = (dz * f + rz * r) * sp;
+      camera.position.x += mx; camera.position.y += my; camera.position.z += mz;
+      controls.target.x += mx; controls.target.y += my; controls.target.z += mz;
+      flyAnim = null; controls.autoRotate = false; lastInteract = now; $('hint').style.opacity = 0;
+    }
+  }
+
   if (flyAnim) {
     const k = clamp((now - flyAnim.t0) / flyAnim.dur, 0, 1), e = ease(k);
     camera.position.lerpVectors(flyAnim.p0, flyAnim.p1, e); controls.target.lerpVectors(flyAnim.c0, flyAnim.c1, e);
@@ -740,8 +758,13 @@ function wire() {
     renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight);
     camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); drawHist();
   });
+  const MOVE_KEYS = new Set(['w', 'a', 's', 'd', 'q', 'e', 'shift']);
+  addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
+  addEventListener('blur', () => keys.clear()); // no stuck keys after alt-tabbing
   addEventListener('keydown', (e) => {
     if (e.target instanceof HTMLInputElement && e.target.type === 'text') { if (e.key === 'Escape') e.target.blur(); return; }
+    const k = e.key.toLowerCase();
+    if (MOVE_KEYS.has(k) && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target instanceof HTMLSelectElement)) { keys.add(k); if (k !== 'shift') e.preventDefault(); return; }
     if (e.key === ' ' && e.target === document.body) { e.preventDefault(); setPlaying(!playing); }
     else if (e.key === 'Escape') setFocus(null);
     else if (e.target === document.body && e.key === 'ArrowRight') setTime(time + 3);
