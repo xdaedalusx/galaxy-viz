@@ -1,0 +1,801 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paper Galaxy</title>
+<style>
+  :root {
+    --bg: #02030a;
+    --ink: #dfe6f5;
+    --dim: #8b96b0;
+    --faint: #5a6480;
+    --line: rgba(160, 180, 230, .16);
+    --panel: rgba(8, 11, 24, .72);
+    --accent: #ffc27a;
+    --void: #5fe0d0;
+    --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 13px/1.45 var(--font); overflow: hidden; }
+  #stage { position: fixed; inset: 0; }
+  #stage canvas { display: block; width: 100%; height: 100%; outline: none; }
+  .glass { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+  .hud { position: fixed; z-index: 5; }
+  h1 { font-size: 12px; font-weight: 600; letter-spacing: .22em; text-transform: uppercase; margin: 0; color: var(--ink); }
+  .sub { color: var(--faint); font-size: 11px; margin-top: 2px; }
+  label.row, .row { display: flex; align-items: center; gap: 8px; }
+  button, select, input[type=text] { font: inherit; color: var(--ink); background: rgba(255,255,255,.05); border: 1px solid var(--line); border-radius: 6px; padding: 4px 9px; }
+  button { cursor: pointer; } button:hover, select:hover { background: rgba(255,255,255,.1); }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  input[type=checkbox] { accent-color: var(--accent); }
+
+  #controls { top: 14px; left: 14px; width: 232px; padding: 12px 14px; display: flex; flex-direction: column; gap: 9px; max-height: calc(100vh - 150px); overflow: auto; }
+  #controls .grp { display: flex; flex-direction: column; gap: 6px; padding-top: 9px; border-top: 1px solid var(--line); }
+  #controls .cap { font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--faint); }
+  .seg { display: flex; } .seg button { flex: 1; border-radius: 0; } .seg button:first-child { border-radius: 6px 0 0 6px; } .seg button:last-child { border-radius: 0 6px 6px 0; }
+  .seg button[aria-pressed=true] { background: rgba(255,194,122,.18); border-color: rgba(255,194,122,.5); color: #ffe2bd; }
+  input[type=range].plain { width: 100%; accent-color: var(--accent); }
+  .grad { height: 6px; border-radius: 3px; background: linear-gradient(90deg, #ffb35c, #ffe9c4 50%, #8fd0ff); }
+  .legend-note { color: var(--faint); font-size: 11px; display: flex; justify-content: space-between; }
+  .item { display: flex; gap: 8px; align-items: baseline; padding: 4px 6px; border-radius: 6px; cursor: pointer; }
+  .item:hover { background: rgba(255,255,255,.07); }
+  .item[aria-current=true] { background: rgba(255,255,255,.12); }
+  .sw { width: 9px; height: 9px; border-radius: 50%; flex: none; transform: translateY(1px); }
+  .item small { color: var(--faint); margin-left: auto; font-family: var(--mono); font-size: 11px; }
+  .voiditem .sw { background: transparent; border: 1.5px dashed var(--void); }
+  .voiditem { color: #bff3ec; }
+
+  #search { top: 14px; right: 14px; width: 270px; }
+  #search input { width: 100%; padding: 8px 11px; font-size: 13px; }
+  #results { margin-top: 4px; max-height: 260px; overflow: auto; padding: 4px; }
+  #results:empty { display: none; }
+  #results .item { flex-direction: column; gap: 0; }
+  #results .item small { margin-left: 0; }
+
+  #panel { top: 62px; right: 14px; width: 320px; max-height: calc(100vh - 190px); overflow: auto; padding: 14px 16px; display: none; }
+  #panel h2 { font-size: 15px; line-height: 1.3; margin: 0 0 4px; font-weight: 600; }
+  #panel .meta { color: var(--dim); font-size: 12px; margin-bottom: 10px; }
+  #panel .abs { color: #c4cde3; font-size: 12.5px; }
+  #panel h3 { font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--faint); margin: 14px 0 4px; font-weight: 600; }
+  #panel a { color: var(--accent); text-decoration: none; } #panel a:hover { text-decoration: underline; }
+  #panel .close { position: absolute; top: 8px; right: 10px; background: none; border: none; font-size: 18px; color: var(--dim); padding: 0 4px; }
+  #panel.void { border-color: rgba(95,224,208,.4); }
+  #panel .caveat { margin-top: 10px; padding: 8px 10px; border-radius: 6px; background: rgba(95,224,208,.08); color: #bff3ec; font-size: 12px; }
+  #panel ul { list-style: none; margin: 0; padding: 0; } #panel li { padding: 3px 0; }
+  #panel li button { all: unset; cursor: pointer; color: var(--ink); } #panel li button:hover { color: var(--accent); }
+  #panel li span { color: var(--faint); font-family: var(--mono); font-size: 11px; margin-right: 6px; }
+
+  #timeline { left: 50%; bottom: 14px; transform: translateX(-50%); width: min(920px, calc(100vw - 28px)); padding: 10px 14px 12px; }
+  #timeline .top { display: flex; align-items: baseline; gap: 14px; margin-bottom: 6px; }
+  #date { font-size: 22px; font-weight: 300; letter-spacing: .04em; min-width: 140px; }
+  #counts { color: var(--dim); font-size: 12px; font-family: var(--mono); }
+  #timeline .top .grow { flex: 1; }
+  .track { position: relative; height: 46px; }
+  #hist { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #time { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; background: transparent; -webkit-appearance: none; appearance: none; cursor: pointer; }
+  #time::-webkit-slider-runnable-track { height: 46px; background: transparent; }
+  #time::-moz-range-track { height: 46px; background: transparent; }
+  #time::-webkit-slider-thumb { -webkit-appearance: none; width: 3px; height: 46px; background: var(--accent); box-shadow: 0 0 10px 2px rgba(255,194,122,.7); border-radius: 2px; }
+  #time::-moz-range-thumb { width: 3px; height: 46px; border: none; border-radius: 2px; background: var(--accent); box-shadow: 0 0 10px 2px rgba(255,194,122,.7); }
+  #play { width: 34px; height: 28px; padding: 0; font-size: 13px; }
+
+  #tip { position: fixed; z-index: 8; pointer-events: none; padding: 6px 9px; max-width: 300px; display: none; font-size: 12px; }
+  #tip b { font-weight: 600; } #tip span { color: var(--dim); }
+  .lbl { position: fixed; z-index: 3; left: 0; top: 0; pointer-events: none; white-space: nowrap; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: #cfd8ee; text-shadow: 0 0 8px #000, 0 0 3px #000; will-change: transform, opacity; }
+  .lbl.void { color: var(--void); }
+  #msg { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(2,3,10,.92); }
+  #msg .box { max-width: 520px; padding: 26px 28px; text-align: left; }
+  #msg h2 { margin: 0 0 8px; font-size: 16px; } #msg p { color: #b6c0d8; margin: 8px 0; }
+  #msg code { font-family: var(--mono); background: rgba(255,255,255,.08); padding: 1px 6px; border-radius: 4px; }
+  #msg.drag .box { border-color: var(--accent); }
+  #hint { position: fixed; z-index: 4; left: 50%; bottom: 124px; transform: translateX(-50%); color: var(--faint); font-size: 11px; letter-spacing: .08em; pointer-events: none; transition: opacity 1.5s; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  @media (max-width: 760px) {
+    #controls { width: 190px; max-height: 38vh; } #search { width: 190px; top: auto; bottom: 150px; right: 14px; }
+    #panel { top: auto; bottom: 200px; right: 14px; width: calc(100vw - 28px); max-height: 38vh; } #date { font-size: 17px; min-width: 100px; } #hint { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { #hint { transition: none; } }
+</style>
+</head>
+<body>
+<div id="stage" role="img" aria-label="3D map of papers as stars. Use the controls to explore."></div>
+
+<div id="controls" class="hud glass" hidden>
+  <div><h1>Paper Galaxy</h1><div class="sub" id="subtitle"></div></div>
+  <div class="grp">
+    <div class="cap">Star colour</div>
+    <div class="seg" role="group" aria-label="Star colour">
+      <button id="byYear" aria-pressed="true">Year</button><button id="byCluster" aria-pressed="false">Topic</button>
+    </div>
+    <div class="grad" id="yearGrad"></div>
+    <div class="legend-note"><span id="gradA"></span><span>size = citations</span><span id="gradB"></span></div>
+  </div>
+  <div class="grp">
+    <div class="cap">Show</div>
+    <label class="row"><input type="checkbox" id="showCite" checked> Citations</label>
+    <label class="row"><input type="checkbox" id="showSim" checked> Similar-paper links</label>
+    <label class="row"><input type="checkbox" id="showVoids" checked> Voids</label>
+    <label class="row"><input type="checkbox" id="showLabels" checked> Labels</label>
+    <label class="row"><input type="checkbox" id="orbit"> Auto-orbit</label>
+    <label class="row" style="justify-content:space-between">Glow <span style="color:var(--faint)">0 = clarity</span></label>
+    <input class="plain" type="range" id="glow" min="0" max="2" step="0.05" value="0.9" aria-label="Glow strength">
+  </div>
+  <div class="grp"><div class="cap">Voids <span style="text-transform:none;letter-spacing:0">(unbridged topic pairs)</span></div><div id="voidList"></div></div>
+  <div class="grp"><div class="cap">Topics</div><div id="clusterList"></div></div>
+</div>
+
+<div id="search" class="hud" hidden>
+  <input type="text" id="q" placeholder="Search titles…" autocomplete="off" aria-label="Search papers">
+  <div id="results" class="glass" role="listbox"></div>
+</div>
+<div id="panel" class="hud glass" aria-live="polite"></div>
+<div id="tip" class="glass"></div>
+<div id="hint" hidden>drag to orbit · scroll to zoom · right-drag to pan · click a star</div>
+
+<div id="timeline" class="hud glass" hidden>
+  <div class="top">
+    <button id="play" aria-label="Play timeline" title="Play / pause">▶</button>
+    <div id="date" aria-live="off"></div>
+    <div id="counts"></div>
+    <div class="grow"></div>
+    <label class="row">Speed <select id="speed" aria-label="Playback speed">
+      <option value="6">6 mo/s</option><option value="12" selected>1 yr/s</option><option value="24">2 yr/s</option><option value="48">4 yr/s</option></select></label>
+  </div>
+  <div class="track"><canvas id="hist"></canvas><input type="range" id="time" step="0.05" aria-label="Time"></div>
+</div>
+
+<div id="msg">
+  <div class="box glass">
+    <h2 id="msgTitle">Loading…</h2>
+    <p id="msgBody"></p>
+    <p id="msgFile" hidden><input type="file" id="file" accept=".json,application/json" multiple></p>
+  </div>
+</div>
+<div id="labels"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/shaders/CopyShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/postprocessing/Pass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/postprocessing/ShaderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/postprocessing/MaskPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+<script>
+(() => {
+'use strict';
+const $ = (id) => document.getElementById(id);
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+const monthLabel = (t) => { const m = Math.floor(t); return `${MONTHS[((m % 12) + 12) % 12]} ${Math.floor(m / 12)}`; };
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const safeUrl = (u) => (typeof u === 'string' && /^https?:\/\//i.test(u) ? u : null);
+const ease = (x) => (x < .5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2);
+const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+
+function showMessage(title, bodyHtml, withFile) {
+  $('msg').style.display = 'flex';
+  $('msgTitle').textContent = title;
+  $('msgBody').innerHTML = bodyHtml;
+  $('msgFile').hidden = !withFile;
+}
+const hideMessage = () => { $('msg').style.display = 'none'; };
+
+if (typeof THREE === 'undefined' || !THREE.OrbitControls || !THREE.UnrealBloomPass) {
+  showMessage('Could not load three.js',
+    'The viewer loads three.js from <code>cdn.jsdelivr.net</code>. Check your internet connection (or any content blocker) and reload.', false);
+  return;
+}
+
+// ------------------------------------------------------------------------------------------ data
+let G = null;          // graph.json
+let DET = null;        // details.json (lazy)
+let detPromise = null;
+
+async function loadJson(url) {
+  const r = await fetch(url, { cache: 'no-cache' });
+  if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
+  return r.json();
+}
+function fetchDetails() {
+  if (!detPromise) detPromise = loadJson('data/details.json').then((d) => (DET = d)).catch(() => (DET = {}));
+  return detPromise;
+}
+
+function noDataMessage(err) {
+  showMessage('No graph loaded',
+    `Could not read <code>data/graph.json</code> (${esc(err && err.message ? err.message : err)}).<br>` +
+    'Browsers block <code>file://</code> requests, so serve this folder instead:' +
+    '<p><code>npm run view</code></p>' +
+    'or drop a <code>graph.json</code> (and optionally <code>details.json</code>) onto this page, or choose them here:', true);
+}
+
+async function handleFiles(files) {
+  try {
+    for (const f of files) {
+      const j = JSON.parse(await f.text());
+      if (j && Array.isArray(j.nodes) && j.meta) G = j;
+      else if (j && typeof j === 'object') { DET = j; detPromise = Promise.resolve(j); }
+    }
+    if (!G) throw new Error('no graph.json among the files');
+    start(G);
+  } catch (e) {
+    showMessage('That file did not work', `${esc(e.message)}<br>Expected the <code>graph.json</code> written by <code>build-graph</code> / <code>demo</code>.`, true);
+  }
+}
+addEventListener('dragover', (e) => { e.preventDefault(); $('msg').classList.add('drag'); });
+addEventListener('dragleave', () => $('msg').classList.remove('drag'));
+addEventListener('drop', (e) => { e.preventDefault(); $('msg').classList.remove('drag'); if (e.dataTransfer && e.dataTransfer.files.length) handleFiles([...e.dataTransfer.files]); });
+$('file').addEventListener('change', (e) => handleFiles([...e.target.files]));
+
+// ------------------------------------------------------------------------------------------ shaders
+const STAR_VS = `
+attribute float aT; attribute float aSize; attribute vec3 aColor; attribute float aState;
+uniform float uTime; uniform float uScale; uniform float uFlare;
+varying vec3 vColor; varying float vAlpha;
+void main() {
+  float age = uTime - aT;
+  float vis = step(0.0, age);
+  float ramp = smoothstep(0.0, 1.5, age);
+  float flare = 1.0 + 3.0 * uFlare * exp(-max(age, 0.0) / 3.0);
+  float dim = aState < -0.5 ? 0.16 : 1.0;
+  float boost = aState > 1.5 ? 2.4 : (aState > 0.5 ? 1.5 : 1.0);
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  gl_Position = vis > 0.5 ? projectionMatrix * mv : vec4(2.0, 2.0, 2.0, 1.0);
+  float size = aSize * flare * (aState > 1.5 ? 1.7 : 1.0);
+  gl_PointSize = vis > 0.5 ? max(size * uScale / max(-mv.z, 1.0), 1.5) : 0.0;
+  vColor = mix(aColor, vec3(1.0), clamp((flare - 1.0) * 0.18, 0.0, 0.6)) * boost;
+  float depthFade = mix(1.0, 0.5, smoothstep(600.0, 2000.0, -mv.z));
+  vAlpha = ramp * dim * vis * depthFade;
+}`;
+const STAR_FS = `
+varying vec3 vColor; varying float vAlpha;
+void main() {
+  float d = length(gl_PointCoord - 0.5) * 2.0;
+  if (d > 1.0) discard;
+  float core = exp(-d * d * 16.0);
+  float halo = exp(-d * 4.5) * 0.4;
+  float a = (core + halo) * vAlpha;
+  gl_FragColor = vec4(mix(vColor, vec3(1.0), core * 0.55), a);
+}`;
+const EDGE_VS = `
+attribute float aT; attribute float aType;
+uniform float uTime; uniform vec2 uShow; uniform float uOpacity; uniform float uDim; uniform float uFlare;
+varying float vA; varying vec3 vC;
+void main() {
+  float age = uTime - aT;
+  float show = aType < 0.5 ? uShow.x : uShow.y;
+  float vis = step(0.0, age) * show;
+  float flash = 1.0 + 5.0 * uFlare * exp(-max(age, 0.0) / 2.5);
+  vA = uOpacity * vis * flash * uDim;
+  vC = aType < 0.5 ? vec3(1.0, 0.86, 0.55) : vec3(0.45, 0.7, 1.0);
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  gl_Position = vis > 0.5 ? projectionMatrix * mv : vec4(2.0, 2.0, 2.0, 1.0);
+}`;
+const EDGE_FS = `varying float vA; varying vec3 vC; void main() { gl_FragColor = vec4(vC, clamp(vA, 0.0, 1.0)); }`;
+
+// ------------------------------------------------------------------------------------------ app state
+let renderer, composer, bloom, scene, camera, controls;
+let starMat, edgeMat, stars, edges, selEdges, starfield;
+let nebulae = [], voidSprites = [];
+let N = 0, pos, tArr, magArr, stateArr, clusterOf;
+let minT = 0, maxT = 1, time = 0, playing = false, speed = 12;
+let colorMode = 'year';
+let focus = null; // {type:'node',i} | {type:'cluster',c} | {type:'void',k}
+let adjacency = null, citedBy = null, cites = null;
+let clusterTimes = [], nodeTimesSorted = null, edgeTimes = { cite: [], sim: [] };
+let flyAnim = null, lastInteract = 0, started = false, rafId = 0;
+let hoverIdx = -1, mouse = { x: -1, y: -1, inside: false }, screenXY = null;
+const tmpColor = new THREE.Color();
+
+const clusterColor = (c) => { tmpColor.setHSL(((c * 137.508) % 360) / 360, 0.72, 0.64); return [tmpColor.r, tmpColor.g, tmpColor.b]; };
+const yearColor = (f) => {
+  // warm amber (old) -> pale cream -> icy blue (new)
+  const a = [1.0, 0.70, 0.36], m = [1.0, 0.92, 0.77], b = [0.56, 0.82, 1.0];
+  const [p, q, u] = f < .5 ? [a, m, f * 2] : [m, b, (f - .5) * 2];
+  return [p[0] + (q[0] - p[0]) * u, p[1] + (q[1] - p[1]) * u, p[2] + (q[2] - p[2]) * u];
+};
+const upperBound = (arr, x) => { let lo = 0, hi = arr.length; while (lo < hi) { const mid = (lo + hi) >> 1; if (arr[mid] <= x) lo = mid + 1; else hi = mid; } return lo; };
+
+function radialTexture(stops, size = 128, ring = null) {
+  const c = document.createElement('canvas'); c.width = c.height = size;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  for (const [o, col] of stops) grad.addColorStop(o, col);
+  g.fillStyle = grad; g.fillRect(0, 0, size, size);
+  if (ring) {
+    g.strokeStyle = ring; g.lineWidth = size * 0.012; g.setLineDash([size * 0.04, size * 0.03]);
+    g.beginPath(); g.arc(size / 2, size / 2, size * 0.44, 0, Math.PI * 2); g.stroke();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  return tex;
+}
+
+// ------------------------------------------------------------------------------------------ setup
+function initRenderer() {
+  renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  $('stage').appendChild(renderer.domElement);
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x02030a);
+  camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 1, 6000);
+  controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true; controls.dampingFactor = 0.07;
+  controls.rotateSpeed = 0.6; controls.zoomSpeed = 0.8; controls.autoRotateSpeed = 0.35;
+  controls.minDistance = 20; controls.maxDistance = 2600;
+  controls.addEventListener('start', () => { controls.autoRotate = false; flyAnim = null; lastInteract = performance.now(); $('hint').style.opacity = 0; });
+  controls.addEventListener('end', () => { lastInteract = performance.now(); });
+
+  composer = new THREE.EffectComposer(renderer);
+  composer.addPass(new THREE.RenderPass(scene, camera));
+  bloom = new THREE.UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.9, 0.55, 0.12);
+  composer.addPass(bloom);
+  composer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  composer.setSize(innerWidth, innerHeight);
+}
+
+function buildStarfield() {
+  const count = 2600, p = new Float32Array(count * 3), c = new Float32Array(count * 3);
+  let seed = 1234567;
+  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  for (let i = 0; i < count; i++) {
+    const u = rnd() * 2 - 1, th = rnd() * Math.PI * 2, r = 2200 + rnd() * 900, s = Math.sqrt(1 - u * u);
+    p[i * 3] = r * s * Math.cos(th); p[i * 3 + 1] = r * u; p[i * 3 + 2] = r * s * Math.sin(th);
+    const k = 0.25 + rnd() * 0.5, warm = rnd();
+    c[i * 3] = k * (0.8 + warm * 0.2); c[i * 3 + 1] = k * 0.9; c[i * 3 + 2] = k * (1 - warm * 0.25);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(p, 3));
+  g.setAttribute('color', new THREE.BufferAttribute(c, 3));
+  starfield = new THREE.Points(g, new THREE.PointsMaterial({ size: 1.4, sizeAttenuation: false, vertexColors: true, transparent: true, opacity: 0.7, depthWrite: false }));
+  scene.add(starfield);
+}
+
+function buildGraphObjects() {
+  // clear previous
+  for (const o of [stars, edges, selEdges]) if (o) { scene.remove(o); o.geometry.dispose(); }
+  for (const s of [...nebulae, ...voidSprites]) { scene.remove(s); s.material.dispose(); }
+  nebulae = []; voidSprites = [];
+  $('labels').innerHTML = '';
+
+  const nodes = G.nodes; N = nodes.length;
+  pos = new Float32Array(N * 3); tArr = new Float32Array(N); magArr = new Float32Array(N); stateArr = new Float32Array(N); clusterOf = new Int32Array(N);
+  nodes.forEach((n, i) => { pos[i * 3] = n.x; pos[i * 3 + 1] = n.y; pos[i * 3 + 2] = n.z; tArr[i] = n.t; magArr[i] = n.mag; clusterOf[i] = n.cluster; });
+  minT = G.meta.timeline.minT; maxT = G.meta.timeline.maxT;
+  nodeTimesSorted = Array.from(tArr).sort((a, b) => a - b);
+
+  // adjacency (undirected, with direction preserved separately)
+  adjacency = Array.from({ length: N }, () => []); citedBy = Array.from({ length: N }, () => []); cites = Array.from({ length: N }, () => []);
+  edgeTimes = { cite: [], sim: [] };
+  for (const e of G.edges) {
+    adjacency[e.source].push(e); adjacency[e.target].push(e);
+    if (e.type === 'citation') { citedBy[e.target].push(e.source); cites[e.source].push(e.target); edgeTimes.cite.push(e.t); } else edgeTimes.sim.push(e.t);
+  }
+  edgeTimes.cite.sort((a, b) => a - b); edgeTimes.sim.sort((a, b) => a - b);
+  clusterTimes = G.clusters.map(() => []);
+  nodes.forEach((n) => clusterTimes[n.cluster].push(n.t));
+  clusterTimes.forEach((a) => a.sort((x, y) => x - y));
+
+  // stars
+  const sg = new THREE.BufferGeometry();
+  sg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  sg.setAttribute('aT', new THREE.BufferAttribute(tArr, 1));
+  const sizes = new Float32Array(N);
+  nodes.forEach((n, i) => { sizes[i] = 3.2 + 12 * Math.pow(n.mag, 1.15); });
+  sg.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
+  sg.setAttribute('aColor', new THREE.BufferAttribute(new Float32Array(N * 3), 3));
+  sg.setAttribute('aState', new THREE.BufferAttribute(stateArr, 1));
+  starMat = new THREE.ShaderMaterial({
+    vertexShader: STAR_VS, fragmentShader: STAR_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    uniforms: { uTime: { value: time }, uScale: { value: 600 }, uFlare: { value: reduceMotion ? 0 : 1 } },
+  });
+  stars = new THREE.Points(sg, starMat); stars.frustumCulled = false; stars.renderOrder = 4;
+  scene.add(stars);
+
+  // edges
+  const m = G.edges.length, ep = new Float32Array(m * 6), et = new Float32Array(m * 2), ety = new Float32Array(m * 2);
+  G.edges.forEach((e, k) => {
+    ep.set([pos[e.source * 3], pos[e.source * 3 + 1], pos[e.source * 3 + 2], pos[e.target * 3], pos[e.target * 3 + 1], pos[e.target * 3 + 2]], k * 6);
+    et[k * 2] = et[k * 2 + 1] = e.t; ety[k * 2] = ety[k * 2 + 1] = e.type === 'citation' ? 0 : 1;
+  });
+  const eg = new THREE.BufferGeometry();
+  eg.setAttribute('position', new THREE.BufferAttribute(ep, 3));
+  eg.setAttribute('aT', new THREE.BufferAttribute(et, 1));
+  eg.setAttribute('aType', new THREE.BufferAttribute(ety, 1));
+  edgeMat = new THREE.ShaderMaterial({
+    vertexShader: EDGE_VS, fragmentShader: EDGE_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    uniforms: { uTime: { value: time }, uShow: { value: new THREE.Vector2(1, 1) }, uOpacity: { value: 0.055 }, uDim: { value: 1 }, uFlare: { value: reduceMotion ? 0 : 1 } },
+  });
+  edges = new THREE.LineSegments(eg, edgeMat); edges.frustumCulled = false; edges.renderOrder = 3;
+  scene.add(edges);
+
+  selEdges = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false }));
+  selEdges.frustumCulled = false; selEdges.renderOrder = 5;
+  scene.add(selEdges);
+
+  // nebulae and voids
+  const nebTex = radialTexture([[0, 'rgba(255,255,255,0.9)'], [0.35, 'rgba(255,255,255,0.28)'], [1, 'rgba(255,255,255,0)']]);
+  G.clusters.forEach((c) => {
+    const col = clusterColor(c.id);
+    const mat = new THREE.SpriteMaterial({ map: nebTex, color: new THREE.Color(col[0], col[1], col[2]), blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0 });
+    const s = new THREE.Sprite(mat); s.position.set(c.centroid[0], c.centroid[1], c.centroid[2]); s.renderOrder = 1;
+    s.userData = { base: Math.max(c.radius * 3.2, 70) };
+    scene.add(s); nebulae.push(s);
+    addLabel(`c${c.id}`, c.label, c.centroid, false);
+  });
+  const voidTex = radialTexture([[0, 'rgba(0,0,6,0.92)'], [0.7, 'rgba(0,0,6,0.7)'], [0.96, 'rgba(0,0,6,0)'], [1, 'rgba(0,0,6,0)']], 256, 'rgba(95,224,208,0.55)');
+  G.regions.forEach((r, k) => {
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: voidTex, transparent: true, depthWrite: false, opacity: 0 }));
+    s.position.set(r.center[0], r.center[1], r.center[2]); s.scale.setScalar(r.radius * 2.2); s.renderOrder = 2;
+    scene.add(s); voidSprites.push(s);
+    addLabel(`v${k}`, `void · ${r.label}`, r.center, true);
+  });
+  recolor();
+}
+
+function addLabel(id, text, p, isVoid) {
+  const d = document.createElement('div'); d.className = 'lbl' + (isVoid ? ' void' : ''); d.id = 'lbl-' + id; d.textContent = text;
+  d.dataset.p = p.join(','); $('labels').appendChild(d);
+}
+
+function recolor() {
+  const col = stars.geometry.getAttribute('aColor'), span = Math.max(1, maxT - minT);
+  for (let i = 0; i < N; i++) {
+    const c = colorMode === 'year' ? yearColor((tArr[i] - minT) / span) : clusterColor(clusterOf[i]);
+    col.setXYZ(i, c[0], c[1], c[2]);
+  }
+  col.needsUpdate = true;
+}
+
+// ------------------------------------------------------------------------------------------ UI build
+function buildUI() {
+  $('subtitle').textContent = `${N.toLocaleString()} papers · ${(G.meta.edgeCounts.citation + G.meta.edgeCounts.similarity).toLocaleString()} links`;
+  $('gradA').textContent = Math.floor(minT / 12); $('gradB').textContent = Math.floor(maxT / 12);
+  $('time').min = minT; $('time').max = maxT;
+  $('time').value = time;
+
+  $('clusterList').innerHTML = '';
+  G.clusters.forEach((c) => {
+    const col = clusterColor(c.id).map((v) => Math.round(v * 255));
+    const d = document.createElement('div'); d.className = 'item'; d.tabIndex = 0; d.setAttribute('role', 'button'); d.dataset.cluster = c.id;
+    d.innerHTML = `<span class="sw" style="background:rgb(${col})"></span><span>${esc(c.label)}</span><small>${c.size}</small>`;
+    const go = () => setFocus({ type: 'cluster', c: c.id }, true);
+    d.addEventListener('click', go); d.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+    $('clusterList').appendChild(d);
+  });
+  $('voidList').innerHTML = '';
+  if (!G.regions.length) {
+    $('voidList').innerHTML = '<div class="legend-note" style="display:block">None detected' + (G.meta.hasCitationData ? '.' : ' (needs citation data).') + '</div>';
+  }
+  G.regions.forEach((r, k) => {
+    const d = document.createElement('div'); d.className = 'item voiditem'; d.tabIndex = 0; d.setAttribute('role', 'button'); d.dataset.void = k;
+    d.innerHTML = `<span class="sw"></span><span>${esc(r.label)}</span><small>${r.score ?? ''}</small>`;
+    const go = () => setFocus({ type: 'void', k }, true);
+    d.addEventListener('click', go); d.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+    $('voidList').appendChild(d);
+  });
+  for (const id of ['controls', 'search', 'timeline']) $(id).hidden = false;
+  $('hint').hidden = false;
+  drawHist();
+}
+
+function drawHist() {
+  const cv = $('hist'), dpr = Math.min(devicePixelRatio || 1, 2), w = cv.clientWidth, h = cv.clientHeight;
+  if (!w || !h) return;
+  cv.width = w * dpr; cv.height = h * dpr;
+  const g = cv.getContext('2d'); g.scale(dpr, dpr); g.clearRect(0, 0, w, h);
+  const y0 = Math.floor(minT / 12), y1 = Math.floor(maxT / 12), bins = new Array(y1 - y0 + 1).fill(0);
+  for (let i = 0; i < N; i++) bins[Math.floor(tArr[i] / 12) - y0]++;
+  const peak = Math.max(1, ...bins), span = Math.max(1, maxT - minT);
+  const xOf = (t) => ((t - minT) / span) * w;
+  const bw = Math.max(2, w / bins.length - 2);
+  bins.forEach((v, b) => {
+    const x = xOf(Math.max(minT, (y0 + b) * 12)) + 1, bh = Math.max(2, (v / peak) * (h - 6));
+    const reached = (y0 + b) * 12 <= time;
+    g.fillStyle = reached ? 'rgba(255,194,122,0.55)' : 'rgba(150,170,220,0.18)';
+    g.fillRect(x, h - bh, bw, bh);
+  });
+  g.fillStyle = 'rgba(160,175,215,.55)'; g.font = '10px ' + getComputedStyle(document.body).fontFamily;
+  const stepY = Math.max(1, Math.ceil(bins.length / Math.max(2, Math.floor(w / 60))));
+  for (let y = y0; y <= y1; y += stepY) g.fillText(String(y), Math.min(w - 26, xOf(Math.max(minT, y * 12)) + 2), 10);
+}
+
+// ------------------------------------------------------------------------------------------ time
+function setTime(t, fromSlider) {
+  time = clamp(t, minT, maxT);
+  if (!fromSlider) $('time').value = time;
+  starMat.uniforms.uTime.value = time; edgeMat.uniforms.uTime.value = time;
+  const papers = upperBound(nodeTimesSorted, time);
+  const links = (edgeMat.uniforms.uShow.value.x ? upperBound(edgeTimes.cite, time) : 0) + (edgeMat.uniforms.uShow.value.y ? upperBound(edgeTimes.sim, time) : 0);
+  $('date').textContent = monthLabel(time);
+  $('counts').textContent = `${papers.toLocaleString()} papers · ${links.toLocaleString()} links`;
+  drawHist();
+  if (focus && focus.type === 'node') rebuildSelEdges();
+}
+function setPlaying(on) {
+  playing = on; $('play').textContent = on ? '❚❚' : '▶'; $('play').setAttribute('aria-label', on ? 'Pause timeline' : 'Play timeline');
+  if (on && time >= maxT - 0.01) setTime(minT);
+}
+
+// ------------------------------------------------------------------------------------------ focus / selection
+function rebuildSelEdges() {
+  const pts = [];
+  if (focus && focus.type === 'node') {
+    for (const e of adjacency[focus.i]) {
+      if (e.t > time) continue;
+      pts.push(pos[e.source * 3], pos[e.source * 3 + 1], pos[e.source * 3 + 2], pos[e.target * 3], pos[e.target * 3 + 1], pos[e.target * 3 + 2]);
+    }
+  }
+  selEdges.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts), 3));
+  selEdges.geometry.computeBoundingSphere();
+}
+
+function applyFocusState() {
+  stateArr.fill(0);
+  if (focus) {
+    stateArr.fill(-1);
+    if (focus.type === 'node') {
+      stateArr[focus.i] = 2;
+      for (const e of adjacency[focus.i]) { const o = e.source === focus.i ? e.target : e.source; if (stateArr[o] < 1) stateArr[o] = 1; }
+    } else if (focus.type === 'cluster') {
+      for (let i = 0; i < N; i++) if (clusterOf[i] === focus.c) stateArr[i] = 1;
+    } else if (focus.type === 'void') {
+      const [a, b] = G.regions[focus.k].between || [-1, -1];
+      for (let i = 0; i < N; i++) if (clusterOf[i] === a || clusterOf[i] === b) stateArr[i] = 1;
+    }
+  }
+  stars.geometry.getAttribute('aState').needsUpdate = true;
+  edgeMat.uniforms.uDim.value = focus ? 0.3 : 1;
+  rebuildSelEdges();
+  document.querySelectorAll('#clusterList .item, #voidList .item').forEach((el) => el.removeAttribute('aria-current'));
+  if (focus && focus.type === 'cluster') document.querySelector(`#clusterList .item[data-cluster="${focus.c}"]`)?.setAttribute('aria-current', 'true');
+  if (focus && focus.type === 'void') document.querySelector(`#voidList .item[data-void="${focus.k}"]`)?.setAttribute('aria-current', 'true');
+}
+
+function clusterName(c) { return G.clusters[c] ? G.clusters[c].label : ''; }
+
+function renderPanel() {
+  const p = $('panel');
+  p.className = 'hud glass';
+  if (!focus) { p.style.display = 'none'; return; }
+  p.style.display = 'block';
+  const close = '<button class="close" aria-label="Close panel" id="closePanel">×</button>';
+  if (focus.type === 'node') {
+    const n = G.nodes[focus.i];
+    const det = (DET && DET[n.id]) || {};
+    const doi = det.doi ? `<a href="https://doi.org/${encodeURIComponent(det.doi).replace(/%2F/gi, '/')}" target="_blank" rel="noopener">DOI</a>` : '';
+    const url = safeUrl(det.url) ? `<a href="${esc(safeUrl(det.url))}" target="_blank" rel="noopener">link</a>` : '';
+    const links = [doi, url].filter(Boolean).join(' · ');
+    const refList = (idxs, label) => idxs.length ? `<h3>${label} (${idxs.length})</h3><ul>${idxs.slice(0, 12).map((j) => `<li><button data-go="${j}"><span>${G.nodes[j].year}</span>${esc(G.nodes[j].title)}</button></li>`).join('')}${idxs.length > 12 ? `<li style="color:var(--faint)">+${idxs.length - 12} more</li>` : ''}</ul>` : '';
+    const sims = []; for (const e of adjacency[focus.i]) if (e.type === 'similarity') sims.push(e.source === focus.i ? e.target : e.source);
+    p.innerHTML = close + `<h2>${esc(n.title)}</h2>
+      <div class="meta">${monthLabel(n.t)} · ${esc(clusterName(n.cluster))} · ${n.citations} citation${n.citations === 1 ? '' : 's'}${det.authors ? '<br>' + esc(det.authors.slice(0, 6).join(', ')) + (det.authors.length > 6 ? ' et al.' : '') : ''}${det.venue ? '<br><i>' + esc(det.venue) + '</i>' : ''}${links ? '<br>' + links : ''}</div>
+      <div class="abs">${det.abstract ? esc(det.abstract) : (DET ? '<span style="color:var(--faint)">No abstract in the collection.</span>' : '<span style="color:var(--faint)">Loading details…</span>')}</div>
+      ${refList(cites[focus.i].filter((j) => G.nodes[j].t <= time), 'Cites')}${refList(citedBy[focus.i].filter((j) => G.nodes[j].t <= time), 'Cited by')}${refList(sims.filter((j) => G.nodes[j].t <= time), 'Similar')}`;
+  } else if (focus.type === 'cluster') {
+    const c = G.clusters[focus.c];
+    p.innerHTML = close + `<h2>${esc(c.label)}</h2><div class="meta">${c.size} papers · first appears ${monthLabel(c.firstT)}</div><div class="abs">Keywords: ${esc(c.keywords.join(', '))}</div>`;
+  } else if (focus.type === 'void') {
+    const r = G.regions[focus.k]; p.className = 'hud glass void';
+    p.innerHTML = close + `<h2>Void: ${esc(r.label)}</h2><div class="meta">Detected from ${monthLabel(r.t0)} · score ${r.score}</div>
+      <div class="abs">${esc(r.evidence || '')}</div>
+      <div class="caveat">A candidate gap <b>within this collection</b>, not a finding about the field. The papers may be linked by work that is not in the collection.</div>
+      <h3>Between</h3><ul>${(r.between || []).map((c) => `<li><button data-cluster="${c}">${esc(clusterName(c))}</button></li>`).join('')}</ul>`;
+  }
+  $('closePanel')?.addEventListener('click', () => setFocus(null));
+  p.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => selectNode(+b.dataset.go, true)));
+  p.querySelectorAll('[data-cluster]').forEach((b) => b.addEventListener('click', () => setFocus({ type: 'cluster', c: +b.dataset.cluster }, true)));
+}
+
+function setFocus(f, fly) {
+  focus = f; applyFocusState(); renderPanel();
+  if (!f || !fly) return;
+  if (f.type === 'cluster') { const c = G.clusters[f.c]; flyTo(c.centroid, Math.max(c.radius * 3.2, 140)); }
+  else if (f.type === 'void') { const r = G.regions[f.k]; if (time < r.t0) setTime(r.t0); flyTo(r.center, r.radius * 3.4 + 120); }
+}
+function selectNode(i, fly) {
+  if (G.nodes[i].t > time) setTime(G.nodes[i].t);
+  setFocus({ type: 'node', i }, false);
+  if (!DET) fetchDetails().then(() => { if (focus && focus.type === 'node' && focus.i === i) renderPanel(); });
+  if (fly) flyTo([pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]], Math.max(70, controls.target.distanceTo(camera.position) * 0.55));
+}
+
+function flyTo(target, dist) {
+  const t1 = new THREE.Vector3(target[0], target[1], target[2]);
+  let dir = camera.position.clone().sub(controls.target); if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1);
+  dir.normalize();
+  const p1 = t1.clone().add(dir.multiplyScalar(clamp(dist, 40, 2000)));
+  flyAnim = { t0: performance.now(), dur: reduceMotion ? 1 : 1000, p0: camera.position.clone(), p1, c0: controls.target.clone(), c1: t1 };
+  controls.autoRotate = false;
+}
+
+// ------------------------------------------------------------------------------------------ picking / labels (own projection: no dependence on three's raycaster)
+function project() {
+  camera.updateMatrixWorld();
+  const v = camera.matrixWorldInverse.elements, pr = camera.projectionMatrix.elements, W = innerWidth, H = innerHeight;
+  if (!screenXY || screenXY.length !== N * 3) screenXY = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const x = pos[i * 3], y = pos[i * 3 + 1], z = pos[i * 3 + 2];
+    const vx = v[0] * x + v[4] * y + v[8] * z + v[12], vy = v[1] * x + v[5] * y + v[9] * z + v[13], vz = v[2] * x + v[6] * y + v[10] * z + v[14];
+    const cx = pr[0] * vx + pr[4] * vy + pr[8] * vz + pr[12], cy = pr[1] * vx + pr[5] * vy + pr[9] * vz + pr[13], cw = pr[3] * vx + pr[7] * vy + pr[11] * vz + pr[15];
+    screenXY[i * 3] = cw > 0 ? (cx / cw * 0.5 + 0.5) * W : -1e6;
+    screenXY[i * 3 + 1] = cw > 0 ? (1 - (cy / cw * 0.5 + 0.5)) * H : -1e6;
+    screenXY[i * 3 + 2] = -vz;
+  }
+}
+function pickNode(mx, my, radius = 14) {
+  let best = -1, bd = radius * radius;
+  for (let i = 0; i < N; i++) {
+    if (tArr[i] > time || screenXY[i * 3] < -1e5) continue;
+    const dx = screenXY[i * 3] - mx, dy = screenXY[i * 3 + 1] - my, d = dx * dx + dy * dy - magArr[i] * 20; // larger stars are easier to hit
+    if (d < bd) { bd = d; best = i; }
+  }
+  return best;
+}
+function projectPoint(p) {
+  const v = camera.matrixWorldInverse.elements, pr = camera.projectionMatrix.elements;
+  const vx = v[0] * p[0] + v[4] * p[1] + v[8] * p[2] + v[12], vy = v[1] * p[0] + v[5] * p[1] + v[9] * p[2] + v[13], vz = v[2] * p[0] + v[6] * p[1] + v[10] * p[2] + v[14];
+  const cx = pr[0] * vx + pr[4] * vy + pr[8] * vz + pr[12], cy = pr[1] * vx + pr[5] * vy + pr[9] * vz + pr[13], cw = pr[3] * vx + pr[7] * vy + pr[11] * vz + pr[15];
+  if (!(cw > 0)) return null;
+  return { x: (cx / cw * 0.5 + 0.5) * innerWidth, y: (1 - (cy / cw * 0.5 + 0.5)) * innerHeight, d: -vz };
+}
+function updateLabels() {
+  const show = $('showLabels').checked, voids = $('showVoids').checked;
+  const items = [];
+  document.querySelectorAll('.lbl').forEach((el) => {
+    const isVoid = el.classList.contains('void');
+    const idx = +el.id.split('-')[1].slice(1);
+    const vis = isVoid ? voids && time >= G.regions[idx].t0 : time >= G.clusters[idx].firstT;
+    el.style.opacity = 0;
+    if (!show || !vis) return;
+    const sp = projectPoint(el.dataset.p.split(',').map(Number));
+    if (!sp) return;
+    const fade = clamp(1.25 - (sp.d - 300) / 1100, 0, 1);
+    if (fade <= 0.02) return;
+    items.push({ el, sp, fade, isVoid, prio: isVoid ? 1e6 : G.clusters[idx].size });
+  });
+  // Greedy collision culling: voids first, then larger clusters; a label that would overlap one already
+  // placed stays hidden (it reappears as the camera moves or zooms).
+  items.sort((a, b) => b.prio - a.prio);
+  const placed = [];
+  for (const it of items) {
+    const w = it.el._w || (it.el._w = it.el.offsetWidth), h = 14;
+    const r = { x0: it.sp.x - w / 2 - 6, x1: it.sp.x + w / 2 + 6, y0: it.sp.y - h, y1: it.sp.y + h };
+    if (placed.some((q) => r.x0 < q.x1 && r.x1 > q.x0 && r.y0 < q.y1 && r.y1 > q.y0)) continue;
+    placed.push(r);
+    it.el.style.opacity = it.fade * (it.isVoid ? 0.95 : 0.8);
+    it.el.style.transform = `translate(${it.sp.x.toFixed(1)}px, ${it.sp.y.toFixed(1)}px) translate(-50%, -50%)`;
+  }
+}
+
+// ------------------------------------------------------------------------------------------ frame
+let lastFrame = performance.now();
+function frame(now) {
+  rafId = requestAnimationFrame(frame);
+  const dt = Math.min(0.1, (now - lastFrame) / 1000); lastFrame = now;
+  if (playing) { setTime(time + speed * dt); if (time >= maxT) setPlaying(false); }
+
+  if (flyAnim) {
+    const k = clamp((now - flyAnim.t0) / flyAnim.dur, 0, 1), e = ease(k);
+    camera.position.lerpVectors(flyAnim.p0, flyAnim.p1, e); controls.target.lerpVectors(flyAnim.c0, flyAnim.c1, e);
+    if (k >= 1) flyAnim = null;
+  } else if (!reduceMotion && $('orbit').checked && !controls.autoRotate && now - lastInteract > 6000) controls.autoRotate = true;
+  controls.update();
+
+  // nebulae grow as their cluster fills in; voids fade in at t0
+  for (let c = 0; c < nebulae.length; c++) {
+    const times = clusterTimes[c], seen = upperBound(times, time), frac = seen / Math.max(1, times.length), s = nebulae[c];
+    s.material.opacity = seen ? (focus && focus.type === 'cluster' && focus.c !== c ? 0.03 : 0.04 + 0.13 * frac) : 0;
+    s.scale.setScalar(s.userData.base * (0.7 + 0.5 * Math.sqrt(frac)));
+  }
+  const showV = $('showVoids').checked;
+  voidSprites.forEach((s, k) => { s.material.opacity = showV ? clamp((time - G.regions[k].t0) / 6, 0, 1) * (focus && focus.type === 'void' && focus.k === k ? 1 : 0.85) : 0; });
+
+  if (!reduceMotion) starfield.rotation.y += dt * 0.004;
+  starMat.uniforms.uScale.value = renderer.domElement.height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
+
+  project();
+  if (mouse.inside) updateHover();
+  updateLabels();
+
+  if (bloom.strength > 0.001) composer.render(); else renderer.render(scene, camera);
+}
+
+function updateHover() {
+  const i = pickNode(mouse.x, mouse.y);
+  if (i === hoverIdx) { positionTip(); return; }
+  hoverIdx = i;
+  const tip = $('tip');
+  if (i < 0) { tip.style.display = 'none'; renderer.domElement.style.cursor = 'grab'; return; }
+  const n = G.nodes[i];
+  tip.innerHTML = `<b>${esc(n.title)}</b><br><span>${monthLabel(n.t)} · ${esc(clusterName(n.cluster))} · ${n.citations} cit.</span>`;
+  tip.style.display = 'block'; renderer.domElement.style.cursor = 'pointer'; positionTip();
+}
+function positionTip() {
+  const tip = $('tip'); if (tip.style.display === 'none') return;
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = Math.min(innerWidth - w - 8, mouse.x + 16) + 'px'; tip.style.top = Math.min(innerHeight - h - 8, mouse.y + 16) + 'px';
+}
+
+// ------------------------------------------------------------------------------------------ wiring
+function wire() {
+  const cv = renderer.domElement;
+  cv.addEventListener('pointermove', (e) => { mouse.x = e.clientX; mouse.y = e.clientY; mouse.inside = true; });
+  cv.addEventListener('pointerleave', () => { mouse.inside = false; hoverIdx = -1; $('tip').style.display = 'none'; });
+  let down = null;
+  cv.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY }; });
+  cv.addEventListener('pointerup', (e) => {
+    if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 5) return; // a drag, not a click
+    const i = pickNode(e.clientX, e.clientY, 16);
+    if (i >= 0) selectNode(i, true); else if (focus) setFocus(null);
+  });
+  addEventListener('resize', () => {
+    renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight);
+    camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); drawHist();
+  });
+  addEventListener('keydown', (e) => {
+    if (e.target instanceof HTMLInputElement && e.target.type === 'text') { if (e.key === 'Escape') e.target.blur(); return; }
+    if (e.key === ' ' && e.target === document.body) { e.preventDefault(); setPlaying(!playing); }
+    else if (e.key === 'Escape') setFocus(null);
+    else if (e.target === document.body && e.key === 'ArrowRight') setTime(time + 3);
+    else if (e.target === document.body && e.key === 'ArrowLeft') setTime(time - 3);
+  });
+
+  $('play').addEventListener('click', () => setPlaying(!playing));
+  $('speed').addEventListener('change', (e) => { speed = +e.target.value; });
+  $('time').addEventListener('input', (e) => { setPlaying(false); setTime(+e.target.value, true); });
+  const seg = (mode) => { colorMode = mode; $('byYear').setAttribute('aria-pressed', mode === 'year'); $('byCluster').setAttribute('aria-pressed', mode === 'cluster'); $('yearGrad').style.opacity = mode === 'year' ? 1 : 0.15; recolor(); };
+  $('byYear').addEventListener('click', () => seg('year')); $('byCluster').addEventListener('click', () => seg('cluster'));
+  const edgeShow = () => { edgeMat.uniforms.uShow.value.set($('showCite').checked ? 1 : 0, $('showSim').checked ? 1 : 0); setTime(time); };
+  $('showCite').addEventListener('change', edgeShow); $('showSim').addEventListener('change', edgeShow);
+  $('orbit').addEventListener('change', (e) => { controls.autoRotate = e.target.checked && !reduceMotion; lastInteract = performance.now(); });
+  $('glow').addEventListener('input', (e) => { bloom.strength = +e.target.value; });
+
+  const q = $('q'), res = $('results');
+  q.addEventListener('input', () => {
+    const s = q.value.trim().toLowerCase(); res.innerHTML = '';
+    if (s.length < 2) return;
+    const hits = []; for (let i = 0; i < N && hits.length < 8; i++) if (G.nodes[i].title.toLowerCase().includes(s)) hits.push(i);
+    for (const i of hits) {
+      const d = document.createElement('div'); d.className = 'item'; d.tabIndex = 0; d.setAttribute('role', 'option');
+      d.innerHTML = `<span>${esc(G.nodes[i].title)}</span><small>${G.nodes[i].year} · ${esc(clusterName(G.nodes[i].cluster))}</small>`;
+      const go = () => { res.innerHTML = ''; q.value = ''; selectNode(i, true); };
+      d.addEventListener('click', go); d.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+      res.appendChild(d);
+    }
+    if (!hits.length) res.innerHTML = '<div class="item" style="color:var(--faint);cursor:default">No match</div>';
+  });
+}
+
+// ------------------------------------------------------------------------------------------ start
+function start(graph) {
+  G = graph;
+  if (G.meta && G.meta.schemaVersion !== 1) { showMessage('Unsupported graph', `schemaVersion ${esc(G.meta.schemaVersion)} is not supported (expected 1).`, true); return; }
+  if (!renderer) { try { initRenderer(); } catch (e) { showMessage('WebGL is not available', 'This viewer needs WebGL. Try another browser or enable hardware acceleration.', false); return; } buildStarfield(); wire(); }
+  cancelAnimationFrame(rafId);
+  focus = null; time = G.meta.timeline.maxT; hoverIdx = -1; screenXY = null; playing = false;
+  buildGraphObjects(); buildUI();
+  bloom.strength = +$('glow').value; $('play').textContent = '▶';
+  const R = G.nodes.reduce((m, n) => Math.max(m, Math.hypot(n.x, n.y, n.z)), 1);
+  camera.position.set(R * 1.5, R * 0.7, R * 1.9); controls.target.set(0, 0, 0); controls.update();
+  controls.autoRotate = $('orbit').checked && !reduceMotion;
+  setTime(time); setFocus(null); hideMessage();
+  setTimeout(() => { $('hint').style.opacity = 0; }, 9000);
+  lastFrame = performance.now(); rafId = requestAnimationFrame(frame);
+  started = true;
+}
+
+window.__galaxy = { get state() { return { N, time, minT, maxT, focus, playing, started }; }, setTime, setPlaying, selectNode, setFocus };
+
+loadJson('data/graph.json').then(start).catch(noDataMessage);
+})();
+</script>
+</body>
+</html>

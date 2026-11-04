@@ -1,0 +1,22 @@
+{
+  "name": "paper-galaxy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Data layer for a 3D, time-aware paper graph: importers, synthetic generator, graph builder.",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "generate": "node src/cli/generate.ts",
+    "build-graph": "node src/cli/build-graph.ts",
+    "demo": "node src/cli/demo.ts",
+    "view": "node src/cli/serve.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}
