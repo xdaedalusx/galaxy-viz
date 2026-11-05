@@ -17,6 +17,8 @@ Usage: node src/cli/generate.ts [options]
       --dormant <n> topics that go silent before the end (default: ${DEFAULT_GENERATE_OPTIONS.dormant})
       --orphans <n> topics mentioned often but rarely studied (default: ${DEFAULT_GENERATE_OPTIONS.orphans})
       --refs <n>    average references per paper (default: ${DEFAULT_GENERATE_OPTIONS.avgReferences})
+      --conflicts <n>  claims planted with papers on both sides (default: ${DEFAULT_GENERATE_OPTIONS.conflicts})
+      --consensus <n>  claims planted that all papers agree on, as decoys (default: ${DEFAULT_GENERATE_OPTIONS.consensus})
       --pretty      indent the JSON output
   -h, --help
 
@@ -36,6 +38,8 @@ try {
       dormant: { type: 'string' },
       orphans: { type: 'string' },
       refs: { type: 'string' },
+      conflicts: { type: 'string' },
+      consensus: { type: 'string' },
       pretty: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
@@ -56,6 +60,8 @@ try {
     ['dormant', values.dormant, 'dormant'],
     ['orphans', values.orphans, 'orphans'],
     ['avgReferences', values.refs, 'refs'],
+    ['conflicts', values.conflicts, 'conflicts'],
+    ['consensus', values.consensus, 'consensus'],
   ];
   for (const [key, raw, flag] of map) {
     const v = num(raw, flag);

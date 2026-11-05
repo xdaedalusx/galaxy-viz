@@ -14,6 +14,9 @@
     --panel: rgba(8, 11, 24, .72);
     --accent: #ffc27a;
     --void: #5fe0d0;
+    --for: #52b4ff;
+    --against: #ff6b84;
+    --conflict: #d9a8ff;
     --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
@@ -47,6 +50,8 @@
   .item small { color: var(--faint); margin-left: auto; font-family: var(--mono); font-size: 11px; }
   .voiditem .sw { background: transparent; border: 1.5px dashed var(--void); }
   .voiditem { color: #bff3ec; }
+  .conflictitem { color: #ecdcff; }
+  .conflictitem .sw { background: linear-gradient(90deg, var(--for) 50%, var(--against) 50%); }
 
   #search { top: 14px; right: 14px; width: 270px; }
   #search input { width: 100%; padding: 8px 11px; font-size: 13px; }
@@ -63,6 +68,19 @@
   #panel a { color: var(--accent); text-decoration: none; } #panel a:hover { text-decoration: underline; }
   #panel .close { position: absolute; top: 8px; right: 10px; background: none; border: none; font-size: 18px; color: var(--dim); padding: 0 4px; }
   #panel.void { border-color: rgba(95,224,208,.4); }
+  #panel.conflict { border-color: rgba(217,168,255,.4); }
+  #panel .bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: rgba(255,255,255,.08); }
+  #panel .bar i { display: block; height: 100%; }
+  #panel .barlbl { display: flex; justify-content: space-between; font-size: 11px; color: var(--dim); margin: 3px 0 8px; }
+  #panel .barlbl .f { color: var(--for); } #panel .barlbl .a { color: var(--against); }
+  #panel .read { font-size: 12.5px; color: #c4cde3; margin: 0 0 6px; }
+  #panel .read b { color: var(--ink); font-weight: 600; }
+  #panel svg.strip { display: block; width: 100%; height: auto; }
+  #panel .caveat.conf { background: rgba(217,168,255,.08); color: #e6d2ff; }
+  #panel li span.stance { font-family: var(--font); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; margin-right: 6px; }
+  #panel li span.stance.for { color: var(--for); } #panel li span.stance.against { color: var(--against); }
+  #panel li .quote { color: var(--dim); font-size: 12px; font-style: italic; margin: 2px 0 4px; }
+  #panel h3.for { color: var(--for); } #panel h3.against { color: var(--against); }
   #panel .caveat { margin-top: 10px; padding: 8px 10px; border-radius: 6px; background: rgba(95,224,208,.08); color: #bff3ec; font-size: 12px; }
   #panel ul { list-style: none; margin: 0; padding: 0; } #panel li { padding: 3px 0; }
   #panel li button { all: unset; cursor: pointer; color: var(--ink); } #panel li button:hover { color: var(--accent); }
@@ -86,6 +104,7 @@
   #tip b { font-weight: 600; } #tip span { color: var(--dim); }
   .lbl { position: fixed; z-index: 3; left: 0; top: 0; pointer-events: none; white-space: nowrap; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: #cfd8ee; text-shadow: 0 0 8px #000, 0 0 3px #000; will-change: transform, opacity; }
   .lbl.void { color: var(--void); }
+  .lbl.conflict { color: var(--conflict); }
   #msg { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(2,3,10,.92); }
   #msg .box { max-width: 520px; padding: 26px 28px; text-align: left; }
   #msg h2 { margin: 0 0 8px; font-size: 16px; } #msg p { color: #b6c0d8; margin: 8px 0; }
@@ -118,12 +137,14 @@
     <label class="row"><input type="checkbox" id="showCite" checked> Citations</label>
     <label class="row"><input type="checkbox" id="showSim" checked> Similar-paper links</label>
     <label class="row"><input type="checkbox" id="showVoids" checked> Voids</label>
+    <label class="row"><input type="checkbox" id="showConf" checked> Conflicts</label>
     <label class="row"><input type="checkbox" id="showLabels" checked> Labels</label>
     <label class="row"><input type="checkbox" id="orbit"> Auto-orbit</label>
     <label class="row" style="justify-content:space-between">Glow <span style="color:var(--faint)">0 = clarity</span></label>
     <input class="plain" type="range" id="glow" min="0" max="2" step="0.05" value="0.9" aria-label="Glow strength">
   </div>
   <div class="grp"><div class="cap">Voids <span style="text-transform:none;letter-spacing:0">(unbridged topic pairs)</span></div><div id="voidList"></div></div>
+  <div class="grp"><div class="cap">Conflicts <span style="text-transform:none;letter-spacing:0">(papers that disagree)</span></div><div id="conflictList"></div></div>
   <div class="grp"><div class="cap">Topics</div><div id="clusterList"></div></div>
 </div>
 
@@ -280,6 +301,52 @@ void main() {
 }`;
 const EDGE_FS = `varying float vA; varying vec3 vC; void main() { gl_FragColor = vec4(vC, clamp(vA, 0.0, 1.0)); }`;
 
+// Conflict nebula: soft particles scattered around the papers that disagree, drifting slowly. Papers that
+// support the claim are blue, papers that argue against it are rose, and a haze at the centre is violet, so
+// where the two sides overlap the cloud turns turbulent and mixed.
+const CONF_VS = `
+attribute vec3 aSeed; attribute float aSide; attribute float aT;
+uniform float uTime; uniform float uClock; uniform float uScale; uniform float uAlpha;
+varying vec3 vColor; varying float vA;
+void main() {
+  float age = uTime - aT;
+  float vis = step(0.0, age);
+  float ramp = smoothstep(0.0, 5.0, age);
+  float ph = uClock * 0.22 + aSeed.x * 6.2831;
+  vec3 drift = vec3(sin(ph + aSeed.y * 6.2831), cos(ph * 0.83 + aSeed.z * 6.2831), sin(ph * 0.61 + aSeed.x * 6.2831)) * (5.0 + 12.0 * aSeed.z);
+  vec4 mv = modelViewMatrix * vec4(position + drift, 1.0);
+  gl_Position = vis > 0.5 ? projectionMatrix * mv : vec4(2.0, 2.0, 2.0, 1.0);
+  float size = 26.0 + 44.0 * aSeed.y;
+  gl_PointSize = vis > 0.5 ? max(size * uScale / max(-mv.z, 1.0), 2.0) : 0.0;
+  vec3 forC = vec3(0.32, 0.70, 1.0);
+  vec3 againstC = vec3(1.0, 0.38, 0.52);
+  vec3 hazeC = vec3(0.72, 0.48, 1.0);
+  vColor = aSide > 0.5 ? forC : (aSide < -0.5 ? againstC : hazeC);
+  float tw = 0.78 + 0.22 * sin(uClock * 0.7 + aSeed.x * 20.0);
+  vA = ramp * vis * uAlpha * tw * 0.085;
+}`;
+const CONF_FS = `
+varying vec3 vColor; varying float vA;
+void main() {
+  float d = length(gl_PointCoord - 0.5) * 2.0;
+  if (d > 1.0) discard;
+  gl_FragColor = vec4(vColor, exp(-d * d * 3.2) * vA);
+}`;
+// Dissonant links: each paper to its nearest opposing paper.
+const CLINK_VS = `
+attribute float aT;
+uniform float uTime; uniform float uOpacity; uniform float uFlare;
+varying float vA;
+void main() {
+  float age = uTime - aT;
+  float vis = step(0.0, age);
+  float flash = 1.0 + 4.0 * uFlare * exp(-max(age, 0.0) / 2.5);
+  vA = uOpacity * vis * flash;
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  gl_Position = vis > 0.5 ? projectionMatrix * mv : vec4(2.0, 2.0, 2.0, 1.0);
+}`;
+const CLINK_FS = `varying float vA; void main() { gl_FragColor = vec4(1.0, 0.45, 0.72, clamp(vA, 0.0, 1.0)); }`;
+
 // ------------------------------------------------------------------------------------------ app state
 let renderer, composer, bloom, scene, camera, controls;
 let starMat, edgeMat, stars, edges, selEdges, starfield;
@@ -292,6 +359,9 @@ let adjacency = null, citedBy = null, cites = null;
 let clusterTimes = [], nodeTimesSorted = null, edgeTimes = { cite: [], sim: [] };
 let flyAnim = null, lastInteract = 0, started = false, rafId = 0;
 const keys = new Set(); // movement keys currently held: w a s d q e shift
+let VOIDS = [], CONFLICTS = [], confObjs = [], idIndex = new Map(), sideColored = false;
+const SIDE_FOR = [0.32, 0.70, 1.0], SIDE_AGAINST = [1.0, 0.38, 0.52];
+const normClaim = (c) => String(c).trim().toLowerCase().replace(/\s+/g, ' ').replace(/[.!?]+$/, '');
 let hoverIdx = -1, mouse = { x: -1, y: -1, inside: false }, screenXY = null;
 const tmpColor = new THREE.Color();
 
@@ -364,7 +434,11 @@ function buildGraphObjects() {
   for (const o of [stars, edges, selEdges]) if (o) { scene.remove(o); o.geometry.dispose(); }
   for (const s of [...nebulae, ...voidSprites]) { scene.remove(s); s.material.dispose(); }
   nebulae = []; voidSprites = [];
+  for (const o of confObjs) { scene.remove(o.points); scene.remove(o.lines); o.points.geometry.dispose(); o.lines.geometry.dispose(); o.pmat.dispose(); o.lmat.dispose(); }
+  confObjs = []; sideColored = false;
   $('labels').innerHTML = '';
+  VOIDS = G.regions.filter((r) => r.kind === 'void'); CONFLICTS = G.regions.filter((r) => r.kind === 'conflict');
+  idIndex = new Map(G.nodes.map((n, i) => [n.id, i]));
 
   const nodes = G.nodes; N = nodes.length;
   pos = new Float32Array(N * 3); tArr = new Float32Array(N); magArr = new Float32Array(N); stateArr = new Float32Array(N); clusterOf = new Int32Array(N);
@@ -429,21 +503,105 @@ function buildGraphObjects() {
     const s = new THREE.Sprite(mat); s.position.set(c.centroid[0], c.centroid[1], c.centroid[2]); s.renderOrder = 1;
     s.userData = { base: Math.max(c.radius * 3.2, 70) };
     scene.add(s); nebulae.push(s);
-    addLabel(`c${c.id}`, c.label, c.centroid, false);
+    addLabel(`c${c.id}`, c.label, c.centroid, 'cluster', c.id);
   });
   const voidTex = radialTexture([[0, 'rgba(0,0,6,0.92)'], [0.7, 'rgba(0,0,6,0.7)'], [0.96, 'rgba(0,0,6,0)'], [1, 'rgba(0,0,6,0)']], 256, 'rgba(95,224,208,0.55)');
-  G.regions.forEach((r, k) => {
+  VOIDS.forEach((r, k) => {
     const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: voidTex, transparent: true, depthWrite: false, opacity: 0 }));
     s.position.set(r.center[0], r.center[1], r.center[2]); s.scale.setScalar(r.radius * 2.2); s.renderOrder = 2;
     scene.add(s); voidSprites.push(s);
-    addLabel(`v${k}`, `void · ${r.label}`, r.center, true);
+    addLabel(`v${k}`, `void · ${r.label}`, r.center, 'void', k);
+  });
+  CONFLICTS.forEach((c, k) => {
+    buildConflictObjects(c, k);
+    addLabel(`x${k}`, `contested · ${c.claim.length > 52 ? c.claim.slice(0, 51) + '…' : c.claim}`, c.center, 'conflict', k);
   });
   recolor();
 }
 
-function addLabel(id, text, p, isVoid) {
-  const d = document.createElement('div'); d.className = 'lbl' + (isVoid ? ' void' : ''); d.id = 'lbl-' + id; d.textContent = text;
-  d.dataset.p = p.join(','); $('labels').appendChild(d);
+function addLabel(id, text, p, kind, idx) {
+  const d = document.createElement('div'); d.className = 'lbl' + (kind === 'cluster' ? '' : ' ' + kind); d.id = 'lbl-' + id; d.textContent = text;
+  d.dataset.p = p.join(','); d.dataset.kind = kind; d.dataset.idx = idx; $('labels').appendChild(d);
+}
+
+// What the viewer can say about a conflict from data already in graph.json (sides, node times, citations,
+// citation edges). Cached on the region object.
+function analyze(c) {
+  if (c._a) return c._a;
+  const pro = c.sides.for.map((id) => idIndex.get(id)).filter((i) => i !== undefined);
+  const con = c.sides.against.map((id) => idIndex.get(id)).filter((i) => i !== undefined);
+  const side = new Map(); pro.forEach((i) => side.set(i, 1)); con.forEach((i) => side.set(i, -1));
+  const n = pro.length + con.length;
+  const cit = (arr) => arr.reduce((a, i) => a + (G.nodes[i].citations || 0), 0);
+  const citPro = cit(pro), citCon = cit(con);
+  let same = 0, cross = 0;
+  for (const e of G.edges) {
+    if (e.type !== 'citation') continue;
+    const a = side.get(e.source), b = side.get(e.target);
+    if (a === undefined || b === undefined) continue;
+    if (a === b) same++; else cross++;
+  }
+  const pairs = (n * (n - 1)) / 2;
+  const expectedCross = pairs > 0 ? (pro.length * con.length) / pairs : 0;
+  const ordered = [...side.keys()].sort((x, y) => G.nodes[x].t - G.nodes[y].t);
+  const third = Math.max(2, Math.floor(n / 3));
+  const share = (arr) => arr.filter((i) => side.get(i) === 1).length / Math.max(1, arr.length);
+  const lean = n >= 6 ? { early: share(ordered.slice(0, third)), late: share(ordered.slice(-third)) } : null;
+  return (c._a = { pro, con, side, n, citPro, citCon, same, cross, expectedCross, lean, ordered, firstT: G.nodes[ordered[0]].t, lastT: G.nodes[ordered[ordered.length - 1]].t });
+}
+
+function buildConflictObjects(c, k) {
+  const a = analyze(c);
+  const per = 9, haze = 36, sigma = clamp(c.radius * 0.2, 8, 28);
+  let seed = 7919 * (k + 1);
+  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const gauss = () => { let sum = 0; for (let j = 0; j < 4; j++) sum += rnd(); return (sum - 2) * 1.73; };
+  const members = [...a.pro.map((i) => [i, 1]), ...a.con.map((i) => [i, -1])];
+  const m = members.length * per + haze;
+  const P = new Float32Array(m * 3), S = new Float32Array(m * 3), side = new Float32Array(m), tt = new Float32Array(m);
+  let q = 0;
+  for (const [i, sd] of members) {
+    for (let j = 0; j < per; j++, q++) {
+      P[q * 3] = pos[i * 3] + gauss() * sigma; P[q * 3 + 1] = pos[i * 3 + 1] + gauss() * sigma; P[q * 3 + 2] = pos[i * 3 + 2] + gauss() * sigma;
+      S[q * 3] = rnd(); S[q * 3 + 1] = rnd(); S[q * 3 + 2] = rnd(); side[q] = sd; tt[q] = tArr[i];
+    }
+  }
+  for (let j = 0; j < haze; j++, q++) {
+    P[q * 3] = c.center[0] + gauss() * c.radius * 0.6; P[q * 3 + 1] = c.center[1] + gauss() * c.radius * 0.6; P[q * 3 + 2] = c.center[2] + gauss() * c.radius * 0.6;
+    S[q * 3] = rnd(); S[q * 3 + 1] = rnd(); S[q * 3 + 2] = rnd(); side[q] = 0; tt[q] = c.t0;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(P, 3));
+  g.setAttribute('aSeed', new THREE.BufferAttribute(S, 3));
+  g.setAttribute('aSide', new THREE.BufferAttribute(side, 1));
+  g.setAttribute('aT', new THREE.BufferAttribute(tt, 1));
+  const pmat = new THREE.ShaderMaterial({
+    vertexShader: CONF_VS, fragmentShader: CONF_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    uniforms: { uTime: starMat.uniforms.uTime, uScale: starMat.uniforms.uScale, uClock: { value: 0 }, uAlpha: { value: 1 } },
+  });
+  const points = new THREE.Points(g, pmat); points.frustumCulled = false; points.renderOrder = 2;
+  scene.add(points);
+
+  // dissonant links: each paper to its nearest opposing paper (deduplicated)
+  const seen = new Set(), lp = [], lt = [];
+  const link = (i, j) => {
+    const key = i < j ? i + '|' + j : j + '|' + i; if (seen.has(key)) return; seen.add(key);
+    lp.push(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2], pos[j * 3], pos[j * 3 + 1], pos[j * 3 + 2]);
+    const t = Math.max(tArr[i], tArr[j]); lt.push(t, t);
+  };
+  const nearest = (i, group) => { let best = -1, bd = Infinity; for (const j of group) { const d = (pos[i * 3] - pos[j * 3]) ** 2 + (pos[i * 3 + 1] - pos[j * 3 + 1]) ** 2 + (pos[i * 3 + 2] - pos[j * 3 + 2]) ** 2; if (d < bd) { bd = d; best = j; } } return best; };
+  for (const i of a.pro) { const j = nearest(i, a.con); if (j >= 0) link(i, j); }
+  for (const i of a.con) { const j = nearest(i, a.pro); if (j >= 0) link(i, j); }
+  const lg = new THREE.BufferGeometry();
+  lg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(lp), 3));
+  lg.setAttribute('aT', new THREE.BufferAttribute(new Float32Array(lt), 1));
+  const lmat = new THREE.ShaderMaterial({
+    vertexShader: CLINK_VS, fragmentShader: CLINK_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    uniforms: { uTime: starMat.uniforms.uTime, uOpacity: { value: 0.16 }, uFlare: { value: reduceMotion ? 0 : 1 } },
+  });
+  const lines = new THREE.LineSegments(lg, lmat); lines.frustumCulled = false; lines.renderOrder = 3;
+  scene.add(lines);
+  confObjs.push({ points, pmat, lines, lmat, particles: m, links: lp.length / 6 });
 }
 
 function recolor() {
@@ -451,6 +609,11 @@ function recolor() {
   for (let i = 0; i < N; i++) {
     const c = colorMode === 'year' ? yearColor((tArr[i] - minT) / span) : clusterColor(clusterOf[i]);
     col.setXYZ(i, c[0], c[1], c[2]);
+  }
+  if (focus && focus.type === 'conflict') {
+    const a = analyze(CONFLICTS[focus.k]);
+    for (const i of a.pro) col.setXYZ(i, SIDE_FOR[0], SIDE_FOR[1], SIDE_FOR[2]);
+    for (const i of a.con) col.setXYZ(i, SIDE_AGAINST[0], SIDE_AGAINST[1], SIDE_AGAINST[2]);
   }
   col.needsUpdate = true;
 }
@@ -472,15 +635,24 @@ function buildUI() {
     $('clusterList').appendChild(d);
   });
   $('voidList').innerHTML = '';
-  if (!G.regions.length) {
+  if (!VOIDS.length) {
     $('voidList').innerHTML = '<div class="legend-note" style="display:block">None detected' + (G.meta.hasCitationData ? '.' : ' (needs citation data).') + '</div>';
   }
-  G.regions.forEach((r, k) => {
+  VOIDS.forEach((r, k) => {
     const d = document.createElement('div'); d.className = 'item voiditem'; d.tabIndex = 0; d.setAttribute('role', 'button'); d.dataset.void = k;
     d.innerHTML = `<span class="sw"></span><span>${esc(r.label)}</span><small>${r.score ?? ''}</small>`;
     const go = () => setFocus({ type: 'void', k }, true);
     d.addEventListener('click', go); d.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
     $('voidList').appendChild(d);
+  });
+  $('conflictList').innerHTML = '';
+  if (!CONFLICTS.length) $('conflictList').innerHTML = '<div class="legend-note" style="display:block">None (papers need <code>findings</code>).</div>';
+  CONFLICTS.forEach((r, k) => {
+    const d = document.createElement('div'); d.className = 'item conflictitem'; d.tabIndex = 0; d.setAttribute('role', 'button'); d.dataset.conflict = k;
+    d.innerHTML = `<span class="sw"></span><span>${esc(r.claim)}</span><small>${r.score ?? ''}</small>`;
+    const go = () => setFocus({ type: 'conflict', k }, true);
+    d.addEventListener('click', go); d.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+    $('conflictList').appendChild(d);
   });
   for (const id of ['controls', 'search', 'timeline']) $(id).hidden = false;
   $('hint').hidden = false;
@@ -548,19 +720,67 @@ function applyFocusState() {
     } else if (focus.type === 'cluster') {
       for (let i = 0; i < N; i++) if (clusterOf[i] === focus.c) stateArr[i] = 1;
     } else if (focus.type === 'void') {
-      const [a, b] = G.regions[focus.k].between || [-1, -1];
+      const [a, b] = VOIDS[focus.k].between || [-1, -1];
       for (let i = 0; i < N; i++) if (clusterOf[i] === a || clusterOf[i] === b) stateArr[i] = 1;
+    } else if (focus.type === 'conflict') {
+      const a = analyze(CONFLICTS[focus.k]);
+      for (const i of a.side.keys()) stateArr[i] = 1;
     }
   }
   stars.geometry.getAttribute('aState').needsUpdate = true;
   edgeMat.uniforms.uDim.value = focus ? 0.3 : 1;
+  const wantSides = !!(focus && focus.type === 'conflict');
+  if (wantSides || sideColored) { sideColored = wantSides; recolor(); }
   rebuildSelEdges();
-  document.querySelectorAll('#clusterList .item, #voidList .item').forEach((el) => el.removeAttribute('aria-current'));
+  document.querySelectorAll('#clusterList .item, #voidList .item, #conflictList .item').forEach((el) => el.removeAttribute('aria-current'));
   if (focus && focus.type === 'cluster') document.querySelector(`#clusterList .item[data-cluster="${focus.c}"]`)?.setAttribute('aria-current', 'true');
   if (focus && focus.type === 'void') document.querySelector(`#voidList .item[data-void="${focus.k}"]`)?.setAttribute('aria-current', 'true');
+  if (focus && focus.type === 'conflict') document.querySelector(`#conflictList .item[data-conflict="${focus.k}"]`)?.setAttribute('aria-current', 'true');
 }
 
 function clusterName(c) { return G.clusters[c] ? G.clusters[c].label : ''; }
+
+const pct = (x) => Math.round(x * 100);
+function stripChart(a) {
+  // one row per side, one dot per paper along the dispute's own time axis; the cursor is the timeline position
+  const W = 288, H = 56, x0 = 10, x1 = W - 10, span = Math.max(1, a.lastT - a.firstT);
+  const X = (t) => x0 + ((t - a.firstT) / span) * (x1 - x0), yF = 17, yA = 39;
+  const dot = (i, y, col) => `<circle cx="${X(G.nodes[i].t).toFixed(1)}" cy="${y}" r="3.3" fill="${col}" opacity="${G.nodes[i].t <= time ? 0.9 : 0.22}"><title>${esc(G.nodes[i].title)} (${G.nodes[i].year})</title></circle>`;
+  const cx = X(clamp(time, a.firstT, a.lastT)).toFixed(1);
+  return `<svg class="strip" viewBox="0 0 ${W} ${H}" role="img" aria-label="Papers supporting and arguing against the claim, over time">
+    <line x1="${x0}" x2="${x1}" y1="${yF}" y2="${yF}" stroke="rgba(160,180,230,.18)"/><line x1="${x0}" x2="${x1}" y1="${yA}" y2="${yA}" stroke="rgba(160,180,230,.18)"/>
+    ${a.pro.map((i) => dot(i, yF, 'var(--for)')).join('')}${a.con.map((i) => dot(i, yA, 'var(--against)')).join('')}
+    <line x1="${cx}" x2="${cx}" y1="3" y2="${H - 12}" stroke="var(--accent)" stroke-width="1" opacity=".7"/>
+    <text x="${x0}" y="${H - 2}" fill="var(--faint)" font-size="9">${Math.floor(a.firstT / 12)}</text>
+    <text x="${x1}" y="${H - 2}" fill="var(--faint)" font-size="9" text-anchor="end">${Math.floor(a.lastT / 12)}</text></svg>`;
+}
+function conflictPanelHtml(c) {
+  const a = analyze(c), np = a.pro.length, nc = a.con.length;
+  const list = (idxs, cls, label) => `<h3 class="${cls}">${label} (${idxs.length})</h3><ul>${idxs.slice(0, 8).map((j) => `<li><button data-go="${j}"><span>${G.nodes[j].year}</span>${esc(G.nodes[j].title)}</button></li>`).join('')}${idxs.length > 8 ? `<li style="color:var(--faint)">+${idxs.length - 8} more</li>` : ''}</ul>`;
+  const byYear = (arr) => arr.slice().sort((x, y) => G.nodes[x].t - G.nodes[y].t);
+  const citTot = a.citPro + a.citCon;
+  const citBar = citTot > 0 ? `<div class="bar" title="split by citations"><i style="width:${pct(a.citPro / citTot)}%;background:var(--for)"></i><i style="width:${100 - pct(a.citPro / citTot)}%;background:var(--against)"></i></div>
+      <div class="barlbl"><span class="f">${a.citPro} citations</span><span>weighted by citations</span><span class="a">${a.citCon} citations</span></div>` : '';
+  let trend;
+  if (!a.lean) trend = 'Too few papers to describe a trend.';
+  else if (Math.abs(a.lean.late - a.lean.early) >= 0.4) trend = `<b>The balance has shifted.</b> Among the earliest papers ${pct(a.lean.early)}% support the claim; among the most recent, ${pct(a.lean.late)}% do, so opinion has moved toward ${a.lean.late > a.lean.early ? 'support' : 'opposition'}.`;
+  else trend = `<b>The split is stable.</b> ${pct(a.lean.early)}% of the earliest papers and ${pct(a.lean.late)}% of the most recent support the claim: a live dispute rather than one side winning.`;
+  const total = a.same + a.cross; let silo;
+  if (total < 5) silo = 'Too few citations among these papers to say whether the two sides engage each other.';
+  else {
+    const obs = a.cross / total, ratio = a.expectedCross > 0 ? obs / a.expectedCross : 1;
+    const detail = `${a.cross} of ${total} citations among these papers cross the divide (${pct(obs)}%; ~${pct(a.expectedCross)}% if sides ignored the dispute)`;
+    silo = ratio < 0.6 ? `<b>Mostly talking past each other.</b> ${detail}.` : ratio > 1.4 ? `<b>Engaging directly.</b> ${detail}.` : `<b>No strong camp structure.</b> ${detail}.`;
+  }
+  return `<h2>Contested: ${esc(c.claim)}</h2>
+    <div class="meta">Disputed since ${monthLabel(c.t0)} · ${a.n} papers · score ${c.score}</div>
+    <div class="bar" title="split by papers"><i style="width:${pct(np / a.n)}%;background:var(--for)"></i><i style="width:${100 - pct(np / a.n)}%;background:var(--against)"></i></div>
+    <div class="barlbl"><span class="f">${np} support</span><span>by paper count</span><span class="a">${nc} against</span></div>${citBar}
+    <h3>Over time</h3>${stripChart(a)}
+    <h3>Reading the dispute</h3><p class="read">${trend}</p><p class="read">${silo}</p>
+    ${list(byYear(a.pro), 'for', 'Support')}${list(byYear(a.con), 'against', 'Argue against')}
+    <div class="caveat conf">Built from the <b>findings</b> supplied with each paper. Real collections need those extracted from the text, which can be wrong, and claims only match when phrased identically. Distances are not meaningful here.</div>`;
+}
 
 function renderPanel() {
   const p = $('panel');
@@ -575,22 +795,30 @@ function renderPanel() {
     const url = safeUrl(det.url) ? `<a href="${esc(safeUrl(det.url))}" target="_blank" rel="noopener">link</a>` : '';
     const links = [doi, url].filter(Boolean).join(' · ');
     const refList = (idxs, label) => idxs.length ? `<h3>${label} (${idxs.length})</h3><ul>${idxs.slice(0, 12).map((j) => `<li><button data-go="${j}"><span>${G.nodes[j].year}</span>${esc(G.nodes[j].title)}</button></li>`).join('')}${idxs.length > 12 ? `<li style="color:var(--faint)">+${idxs.length - 12} more</li>` : ''}</ul>` : '';
+    const fnd = (det.findings || []).map((f) => {
+      const k = CONFLICTS.findIndex((cf) => normClaim(cf.claim) === normClaim(f.claim));
+      const claimHtml = k >= 0 ? `<button data-conflict="${k}">${esc(f.claim)}</button>` : esc(f.claim);
+      return `<li><span class="stance ${f.stance === 'for' ? 'for' : 'against'}">${f.stance === 'for' ? 'supports' : 'argues against'}</span>${claimHtml}${f.quote ? `<div class="quote">“${esc(f.quote)}”</div>` : ''}</li>`;
+    }).join('');
+    const findingsHtml = fnd ? `<h3>Findings</h3><ul>${fnd}</ul>` : '';
     const sims = []; for (const e of adjacency[focus.i]) if (e.type === 'similarity') sims.push(e.source === focus.i ? e.target : e.source);
     p.innerHTML = close + `<h2>${esc(n.title)}</h2>
       <div class="meta">${monthLabel(n.t)} · ${esc(clusterName(n.cluster))} · ${n.citations} citation${n.citations === 1 ? '' : 's'}${det.authors ? '<br>' + esc(det.authors.slice(0, 6).join(', ')) + (det.authors.length > 6 ? ' et al.' : '') : ''}${det.venue ? '<br><i>' + esc(det.venue) + '</i>' : ''}${links ? '<br>' + links : ''}</div>
       <div class="abs">${det.abstract ? esc(det.abstract) : (DET ? '<span style="color:var(--faint)">No abstract in the collection.</span>' : '<span style="color:var(--faint)">Loading details…</span>')}</div>
-      ${refList(cites[focus.i].filter((j) => G.nodes[j].t <= time), 'Cites')}${refList(citedBy[focus.i].filter((j) => G.nodes[j].t <= time), 'Cited by')}${refList(sims.filter((j) => G.nodes[j].t <= time), 'Similar')}`;
+      ${findingsHtml}${refList(cites[focus.i].filter((j) => G.nodes[j].t <= time), 'Cites')}${refList(citedBy[focus.i].filter((j) => G.nodes[j].t <= time), 'Cited by')}${refList(sims.filter((j) => G.nodes[j].t <= time), 'Similar')}`;
   } else if (focus.type === 'cluster') {
     const c = G.clusters[focus.c];
     p.innerHTML = close + `<h2>${esc(c.label)}</h2><div class="meta">${c.size} papers · first appears ${monthLabel(c.firstT)}</div><div class="abs">Keywords: ${esc(c.keywords.join(', '))}</div>`;
   } else if (focus.type === 'void') {
-    const r = G.regions[focus.k]; p.className = 'hud glass void';
+    const r = VOIDS[focus.k]; p.className = 'hud glass void';
     p.innerHTML = close + `<h2>Void: ${esc(r.label)}</h2><div class="meta">Detected from ${monthLabel(r.t0)} · score ${r.score}</div>
       <div class="abs">${esc(r.evidence || '')}</div>
       <div class="caveat">A candidate gap <b>within this collection</b>, not a finding about the field. The papers may be linked by work that is not in the collection.</div>
       <h3>Between</h3><ul>${(r.between || []).map((c) => `<li><button data-cluster="${c}">${esc(clusterName(c))}</button></li>`).join('')}</ul>`;
   }
+  else if (focus.type === 'conflict') { p.className = 'hud glass conflict'; p.innerHTML = close + conflictPanelHtml(CONFLICTS[focus.k]); }
   $('closePanel')?.addEventListener('click', () => setFocus(null));
+  p.querySelectorAll('[data-conflict]').forEach((b) => b.addEventListener('click', () => setFocus({ type: 'conflict', k: +b.dataset.conflict }, true)));
   p.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => selectNode(+b.dataset.go, true)));
   p.querySelectorAll('[data-cluster]').forEach((b) => b.addEventListener('click', () => setFocus({ type: 'cluster', c: +b.dataset.cluster }, true)));
 }
@@ -599,7 +827,8 @@ function setFocus(f, fly) {
   focus = f; applyFocusState(); renderPanel();
   if (!f || !fly) return;
   if (f.type === 'cluster') { const c = G.clusters[f.c]; flyTo(c.centroid, Math.max(c.radius * 3.2, 140)); }
-  else if (f.type === 'void') { const r = G.regions[f.k]; if (time < r.t0) setTime(r.t0); flyTo(r.center, r.radius * 3.4 + 120); }
+  else if (f.type === 'void') { const r = VOIDS[f.k]; if (time < r.t0) setTime(r.t0); flyTo(r.center, r.radius * 3.4 + 120); }
+  else if (f.type === 'conflict') { const r = CONFLICTS[f.k]; if (time < r.t0) setTime(r.t0); flyTo(r.center, r.radius * 3.2 + 140); }
 }
 function selectNode(i, fly) {
   if (G.nodes[i].t > time) setTime(G.nodes[i].t);
@@ -648,19 +877,18 @@ function projectPoint(p) {
   return { x: (cx / cw * 0.5 + 0.5) * innerWidth, y: (1 - (cy / cw * 0.5 + 0.5)) * innerHeight, d: -vz };
 }
 function updateLabels() {
-  const show = $('showLabels').checked, voids = $('showVoids').checked;
+  const show = $('showLabels').checked, voids = $('showVoids').checked, confs = $('showConf').checked;
   const items = [];
   document.querySelectorAll('.lbl').forEach((el) => {
-    const isVoid = el.classList.contains('void');
-    const idx = +el.id.split('-')[1].slice(1);
-    const vis = isVoid ? voids && time >= G.regions[idx].t0 : time >= G.clusters[idx].firstT;
+    const kind = el.dataset.kind, idx = +el.dataset.idx, isVoid = kind === 'void';
+    const vis = kind === 'void' ? voids && time >= VOIDS[idx].t0 : kind === 'conflict' ? confs && time >= CONFLICTS[idx].t0 : time >= G.clusters[idx].firstT;
     el.style.opacity = 0;
     if (!show || !vis) return;
     const sp = projectPoint(el.dataset.p.split(',').map(Number));
     if (!sp) return;
     const fade = clamp(1.25 - (sp.d - 300) / 1100, 0, 1);
     if (fade <= 0.02) return;
-    items.push({ el, sp, fade, isVoid, prio: isVoid ? 1e6 : G.clusters[idx].size });
+    items.push({ el, sp, fade, isVoid, prio: kind === 'void' ? 1e6 : kind === 'conflict' ? 5e5 : G.clusters[idx].size });
   });
   // Greedy collision culling: voids first, then larger clusters; a label that would overlap one already
   // placed stays hidden (it reappears as the camera moves or zooms).
@@ -714,7 +942,16 @@ function frame(now) {
     s.scale.setScalar(s.userData.base * (0.7 + 0.5 * Math.sqrt(frac)));
   }
   const showV = $('showVoids').checked;
-  voidSprites.forEach((s, k) => { s.material.opacity = showV ? clamp((time - G.regions[k].t0) / 6, 0, 1) * (focus && focus.type === 'void' && focus.k === k ? 1 : 0.85) : 0; });
+  voidSprites.forEach((s, k) => { s.material.opacity = showV ? clamp((time - VOIDS[k].t0) / 6, 0, 1) * (focus && focus.type === 'void' && focus.k === k ? 1 : 0.85) : 0; });
+
+  const showC = $('showConf').checked;
+  confObjs.forEach((o, k) => {
+    o.points.visible = o.lines.visible = showC;
+    const other = focus && focus.type === 'conflict' && focus.k !== k;
+    o.pmat.uniforms.uClock.value = reduceMotion ? 0 : now / 1000;
+    o.pmat.uniforms.uAlpha.value = other ? 0.25 : (focus && focus.type === 'conflict' ? 1.5 : 1);
+    o.lmat.uniforms.uOpacity.value = other ? 0.04 : (focus && focus.type === 'conflict' ? 0.4 : 0.16);
+  });
 
   if (!reduceMotion) starfield.rotation.y += dt * 0.004;
   starMat.uniforms.uScale.value = renderer.domElement.height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
@@ -815,7 +1052,14 @@ function start(graph) {
   started = true;
 }
 
-window.__galaxy = { get state() { return { N, time, minT, maxT, focus, playing, started }; }, setTime, setPlaying, selectNode, setFocus };
+window.__galaxy = {
+  get state() { return { N, time, minT, maxT, focus, playing, started }; }, setTime, setPlaying, selectNode, setFocus,
+  // read-only hooks for tests
+  debug() {
+    const col = () => stars.geometry.getAttribute('aColor').array;
+    return { conf: confObjs.map((o) => ({ particles: o.particles, links: o.links, visible: o.points.visible, alpha: o.pmat.uniforms.uAlpha.value })), colorOf: (id) => { const i = idIndex.get(id), c = col(); return [c[i * 3], c[i * 3 + 1], c[i * 3 + 2]]; }, voids: VOIDS.length, conflicts: CONFLICTS.length };
+  },
+};
 
 loadJson('data/graph.json').then(start).catch(noDataMessage);
 })();

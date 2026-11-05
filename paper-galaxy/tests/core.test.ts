@@ -4,7 +4,8 @@ import { test } from 'node:test';
 import { buildGraph } from '../src/core/build/build.ts';
 import { generateCollection } from '../src/core/generate.ts';
 import { importCollection } from '../src/core/import/index.ts';
-import type { GraphData, PaperInput } from '../src/core/types.ts';
+import { detectConflicts } from '../src/core/build/conflicts.ts';
+import type { Finding, GraphData, PaperInput } from '../src/core/types.ts';
 import { validateGraph } from '../src/core/validate.ts';
 
 const example = (name: string) => readFileSync(new URL(`../data/examples/${name}`, import.meta.url), 'utf8');
@@ -95,7 +96,7 @@ test('no citation data: no voids are invented, and the warning says why', () => 
   const { ps } = synthetic(2, 300, 3);
   const stripped = ps.map(({ references: _refs, ...rest }) => rest);
   const { graph } = buildGraph(stripped, { seed: 2 });
-  assert.deepEqual(graph.regions, []);
+  assert.deepEqual(graph.regions.filter((r) => r.kind === 'void'), []);
   assert.ok(graph.meta.warnings.some((w) => /no voids can be detected/.test(w)));
 });
 
@@ -120,7 +121,7 @@ test('void detection recovers planted bridge gaps well above chance (800 papers,
     assert.deepEqual(validateGraph(graph), []);
     const dom = dominantTopics(graph, truth.paperTopics);
     const truthSet = new Set(truth.bridgeVoids.map((v) => key(v.a, v.b)));
-    const found = new Set(graph.regions.map((r) => key(dom[r.between![0]], dom[r.between![1]])));
+    const found = new Set(graph.regions.filter((r) => r.kind === 'void').map((r) => key(dom[r.between![0]], dom[r.between![1]])));
     reported += found.size;
     correct += [...found].filter((f) => truthSet.has(f)).length;
     planted += truthSet.size;
@@ -132,7 +133,89 @@ test('void detection recovers planted bridge gaps well above chance (800 papers,
 });
 
 test('a collection with no planted voids reports far fewer than one with several', () => {
-  const none = synthetic(4, 800, 0).graph.regions.length;
-  const some = synthetic(4, 800, 3).graph.regions.length;
+  const voidsIn = (g: GraphData) => g.regions.filter((r) => r.kind === 'void').length;
+  const none = voidsIn(synthetic(4, 800, 0).graph);
+  const some = voidsIn(synthetic(4, 800, 3).graph);
   assert.ok(none <= some + 2, `no-void run reported ${none}, 3-void run reported ${some}`);
+});
+
+// ---------------------------------------------------------------------------------------- conflicts
+
+test('importer reads findings, accepts stance synonyms, and skips malformed entries with a warning', () => {
+  const r = importCollection(
+    JSON.stringify([
+      {
+        id: 'a', title: 'A', date: '2020-01',
+        findings: [
+          { claim: 'X improves Y', stance: 'supports', quote: 'We confirm it.' },
+          { claim: 'Z hurts W', stance: 'refutes' },
+          { claim: 'no stance here' },
+          { stance: 'for' },
+        ],
+      },
+    ]),
+  );
+  assert.deepEqual(r.papers[0].findings, [
+    { claim: 'X improves Y', stance: 'for', quote: 'We confirm it.' },
+    { claim: 'Z hurts W', stance: 'against' },
+  ]);
+  assert.ok(r.warnings.some((w) => /2 finding\(s\) skipped/.test(w)));
+});
+
+test('detectConflicts: needs both sides, merges phrasing variants, ignores tiny claims, flags a lone dissenter', () => {
+  const f = (claim: string, stance: Finding['stance']): Finding[] => [{ claim, stance }];
+  const ids = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+  const findings: (Finding[] | undefined)[] = [
+    f('Dropout helps small models', 'for'),
+    f('  dropout  helps small models. ', 'for'), // same claim, different case/spacing/period
+    f('DROPOUT HELPS SMALL MODELS', 'against'),
+    f('Unanimous claim', 'for'),
+    f('Unanimous claim', 'for'),
+    f('Unanimous claim', 'for'),
+    f('Two paper claim', 'for'),
+    f('Two paper claim', 'against'), // both sides but below minPapers
+  ];
+  const regions = detectConflicts({ ids, findings, t: [10, 20, 30, 5, 6, 7, 8, 9], positions: ids.map((_, i) => [i * 10, 0, 0] as [number, number, number]) });
+  assert.equal(regions.length, 1);
+  const r = regions[0];
+  assert.deepEqual(r.sides, { for: ['a', 'b'], against: ['c'] });
+  assert.equal(r.claim, 'Dropout helps small models');
+  assert.equal(r.t0, 30, 'dispute exists once the second side has appeared (max of the two first-appearance months)');
+  assert.match(r.evidence ?? '', /single dissenting paper/);
+  assert.deepEqual(r.center, [10, 0, 0]);
+  // a paper that states the same claim twice still counts once
+  const dup = detectConflicts({ ids: ['a', 'b', 'c'], findings: [[...f('P', 'for'), ...f('p', 'for')], f('P', 'against'), f('P', 'against')], t: [1, 2, 3], positions: [[0, 0, 0], [1, 0, 0], [2, 0, 0]] });
+  assert.deepEqual(dup[0].sides, { for: ['a'], against: ['b', 'c'] });
+});
+
+test('graph build: planted disputes are found, unanimous look-alikes are not, and regions validate', () => {
+  for (const seed of [1, 2, 3]) {
+    const { graph, details, truth } = synthetic(seed, 600, 2);
+    assert.deepEqual(validateGraph(graph), []);
+    const found = graph.regions.filter((r) => r.kind === 'conflict');
+    assert.deepEqual(new Set(found.map((r) => r.claim)), new Set(truth.conflicts.map((c) => c.claim)));
+    for (const c of truth.consensus) assert.ok(!found.some((r) => r.claim === c.claim), 'a unanimous claim was reported as a conflict');
+    for (const c of truth.conflicts) {
+      const r = found.find((x) => x.claim === c.claim)!;
+      assert.deepEqual([...r.sides!.for].sort(), [...c.forIds].sort());
+      assert.deepEqual([...r.sides!.against].sort(), [...c.againstIds].sort());
+      const tOf = (id: string) => graph.nodes.find((n) => n.id === id)!.t;
+      assert.equal(r.t0, Math.max(Math.min(...c.forIds.map(tOf)), Math.min(...c.againstIds.map(tOf))));
+    }
+    const someId = found[0].sides!.for[0];
+    assert.ok(details[someId].findings?.some((x) => x.claim === found[0].claim), 'findings reach details.json');
+  }
+});
+
+test('with no findings there are no conflicts; planting does not disturb the rest of the generated data', () => {
+  const plain = generateCollection({ seed: 9, papers: 200, conflicts: 0, consensus: 0 });
+  assert.ok(plain.papers.every((p) => !p.findings));
+  assert.equal(buildGraph(plain.papers, { seed: 9 }).graph.regions.filter((r) => r.kind === 'conflict').length, 0);
+  const planted = generateCollection({ seed: 9, papers: 200 });
+  planted.papers.forEach((p, i) => {
+    const q = plain.papers[i];
+    assert.equal(p.id, q.id); assert.equal(p.title, q.title); assert.equal(p.date, q.date);
+    assert.deepEqual(p.references, q.references);
+    assert.ok((p.abstract ?? '').startsWith(q.abstract ?? ''), 'only appends to abstracts');
+  });
 });

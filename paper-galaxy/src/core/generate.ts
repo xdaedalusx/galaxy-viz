@@ -1,4 +1,4 @@
-import type { PaperInput } from './types.ts';
+import type { Finding, PaperInput } from './types.ts';
 import { Rng } from './util/rng.ts';
 
 export interface GenerateOptions {
@@ -15,6 +15,10 @@ export interface GenerateOptions {
   /** Topics that other papers keep mentioning as open questions, but that are almost never studied. */
   orphans: number;
   avgReferences: number;
+  /** Claims planted with papers on both sides (a live dispute). */
+  conflicts: number;
+  /** Claims planted that every paper agrees on: look-alikes that must not be reported as conflicts. */
+  consensus: number;
 }
 
 export const DEFAULT_GENERATE_OPTIONS: GenerateOptions = {
@@ -27,6 +31,8 @@ export const DEFAULT_GENERATE_OPTIONS: GenerateOptions = {
   dormant: 1,
   orphans: 1,
   avgReferences: 8,
+  conflicts: 2,
+  consensus: 3,
 };
 
 /** What the generator planted, so later analysis (void detection etc.) can be scored against it. */
@@ -39,6 +45,10 @@ export interface SyntheticTruth {
   bridgeVoids: { a: number; b: number }[];
   /** Adjacent topic pairs that do have hybrid papers and cross-citations. */
   bridged: { a: number; b: number }[];
+  /** Planted disputes: a claim, the topic it lives in, and who sits on each side. */
+  conflicts: { claim: string; topic: number; pattern: 'interleaved' | 'reversal'; forIds: string[]; againstIds: string[] }[];
+  /** Planted claims with unanimous support. */
+  consensus: { claim: string; topic: number; ids: string[] }[];
 }
 
 interface TopicPreset {
@@ -369,6 +379,63 @@ export function generateCollection(overrides: Partial<GenerateOptions> = {}): { 
     for (const j of chosen) indeg[j]++;
   }
 
+  // --- findings: contested and uncontested claims ------------------------------------------------------
+  // Uses its own RNG stream, so papers, dates and citations above are identical with or without this step.
+  const frng = new Rng((o.seed ^ 0x5bd1e995) >>> 0);
+  const byTopic: number[][] = topics.map(() => []);
+  topicsOf.forEach((ids, i) => byTopic[ids[0]].push(i));
+  const eligible = frng.shuffle(topics.filter((t) => !t.orphan && byTopic[t.id].length >= 10).map((t) => t.id));
+  const nConf = Math.min(Math.max(0, Math.floor(o.conflicts)), eligible.length);
+  const nCons = Math.min(Math.max(0, Math.floor(o.consensus)), eligible.length - nConf);
+  const conflictsTruth: SyntheticTruth['conflicts'] = [];
+  const consensusTruth: SyntheticTruth['consensus'] = [];
+  const addFinding = (paper: PaperInput, claim: string, stance: Finding['stance']) => {
+    const quote =
+      stance === 'for'
+        ? `Our results support the claim that ${claim.toLowerCase()}.`
+        : `Our results contradict the claim that ${claim.toLowerCase()}.`;
+    (paper.findings ??= []).push({ claim, stance, quote });
+    paper.abstract = `${paper.abstract ?? ''} ${quote}`.trim();
+  };
+  const plant = (tid: number, kind: 'conflict' | 'consensus', index: number) => {
+    const pool = byTopic[tid];
+    const kws = topics[tid].keywords;
+    const a = frng.pick(kws);
+    let b = frng.pick(kws);
+    for (let g = 0; g < 20 && b === a; g++) b = frng.pick(kws);
+    const claim = cap(`${a} improves ${b}`);
+    const m = Math.min(pool.length, Math.max(6, Math.min(30, Math.round(pool.length * 0.35))));
+    const chosen = frng.shuffle([...pool]).slice(0, m).sort((x, y) => paperT[x] - paperT[y]);
+    if (kind === 'consensus') {
+      const stance: Finding['stance'] = index % 2 === 0 ? 'for' : 'against';
+      for (const i of chosen) addFinding(papers[i], claim, stance);
+      consensusTruth.push({ claim, topic: tid, ids: chosen.map((i) => papers[i].id) });
+      return;
+    }
+    const pattern: 'interleaved' | 'reversal' = index % 2 === 0 ? 'interleaved' : 'reversal';
+    let stances: Finding['stance'][];
+    if (pattern === 'reversal') {
+      // early work agreed, later work overturned it
+      const cut = Math.max(2, Math.min(m - 2, Math.round(m * 0.55)));
+      stances = chosen.map((_, k) => (k < cut ? 'for' : 'against'));
+    } else {
+      stances = chosen.map(() => (frng.chance(0.55) ? 'for' : 'against'));
+      for (const side of ['for', 'against'] as const) {
+        for (let k = 0; stances.filter((s) => s === side).length < 2 && k < m; k++) if (stances[k] !== side) stances[k] = side;
+      }
+    }
+    chosen.forEach((i, k) => addFinding(papers[i], claim, stances[k]));
+    conflictsTruth.push({
+      claim,
+      topic: tid,
+      pattern,
+      forIds: chosen.filter((_, k) => stances[k] === 'for').map((i) => papers[i].id),
+      againstIds: chosen.filter((_, k) => stances[k] === 'against').map((i) => papers[i].id),
+    });
+  };
+  for (let k = 0; k < nConf; k++) plant(eligible[k], 'conflict', k);
+  for (let k = 0; k < nCons; k++) plant(eligible[nConf + k], 'consensus', k);
+
   const truth: SyntheticTruth = {
     options: o,
     topics: topics.map((t) => ({
@@ -382,6 +449,8 @@ export function generateCollection(overrides: Partial<GenerateOptions> = {}): { 
     paperTopics: Object.fromEntries(papers.map((p, i) => [p.id, topicsOf[i]])),
     bridgeVoids: voidPairs.map(([a, b]) => ({ a, b })),
     bridged: bridgedPairs.map(([a, b]) => ({ a, b })),
+    conflicts: conflictsTruth,
+    consensus: consensusTruth,
   };
   return { papers, truth };
 }

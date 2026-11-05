@@ -1,4 +1,4 @@
-import type { PaperInput } from '../types.ts';
+import type { Finding, PaperInput } from '../types.ts';
 import { parseDate, type ParsedDate } from '../util/dates.ts';
 import { fnv1a } from '../util/rng.ts';
 
@@ -25,6 +25,7 @@ const FIELDS = {
   doi: ['doi'],
   url: ['url', 'link'],
   embedding: ['embedding'],
+  findings: ['findings', 'claims'],
 } as const;
 
 const isEmpty = (v: unknown) =>
@@ -37,6 +38,30 @@ function asString(v: unknown): string | undefined {
   }
   if (typeof v === 'number' && Number.isFinite(v)) return String(v);
   return undefined;
+}
+
+const STANCE_FOR = new Set(['for', 'support', 'supports', 'supported', 'confirms', 'confirmed', 'positive', 'agree', 'agrees', 'yes', '+', '1']);
+const STANCE_AGAINST = new Set(['against', 'refute', 'refutes', 'refuted', 'contradicts', 'contradicted', 'negative', 'disagree', 'disagrees', 'no', '-', '-1']);
+
+/** Parses `findings`: an array of { claim, stance, quote? }. Bad entries are skipped with a warning. */
+function parseFindings(v: unknown, where: string, warnings: string[]): Finding[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const out: Finding[] = [];
+  let bad = 0;
+  for (const f of v) {
+    const o = obj(f);
+    const claim = asString(o?.claim ?? o?.proposition);
+    const st = String(o?.stance ?? o?.verdict ?? '').trim().toLowerCase();
+    const stance = STANCE_FOR.has(st) ? 'for' : STANCE_AGAINST.has(st) ? 'against' : undefined;
+    if (!claim || !stance) {
+      bad++;
+      continue;
+    }
+    const quote = asString(o?.quote);
+    out.push(quote ? { claim, stance, quote } : { claim, stance });
+  }
+  if (bad) warnings.push(`${where}: ${bad} finding(s) skipped (need a claim and a stance of for/against)`);
+  return out.length ? out : undefined;
 }
 
 const obj = (v: unknown): Record<string, unknown> | undefined =>
@@ -192,6 +217,9 @@ export function normalizeRecords(records: unknown[], source: string): ImportResu
     if (doi) paper.doi = doi;
     const url = asString(first(FIELDS.url));
     if (url) paper.url = url;
+
+    const findings = parseFindings(first(FIELDS.findings), where, warnings);
+    if (findings) paper.findings = findings;
 
     const emb = first(FIELDS.embedding);
     if (Array.isArray(emb) && emb.length > 0 && emb.every((x) => typeof x === 'number' && Number.isFinite(x))) {

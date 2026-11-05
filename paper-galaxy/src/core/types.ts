@@ -3,6 +3,20 @@ export type MonthIndex = number;
 
 export type Vec3 = [number, number, number];
 
+/**
+ * A claim a paper takes a stance on. Claims are matched across papers by their normalised text
+ * (lowercase, collapsed whitespace), so papers must phrase the same claim identically. Producing such
+ * normalised claims from full text is the hard part and is not done here (an LLM extraction step would).
+ */
+export interface Finding {
+  /** The proposition, e.g. "Over-smoothing limits deep graph networks". */
+  claim: string;
+  /** Whether the paper's results support the claim or argue against it. */
+  stance: 'for' | 'against';
+  /** Optional verbatim sentence from the paper that states the finding. */
+  quote?: string;
+}
+
 /** One paper as supplied by the user (or by the generator). Only `title` and `date` are required. */
 export interface PaperInput {
   id: string;
@@ -23,6 +37,8 @@ export interface PaperInput {
   url?: string;
   /** Precomputed embedding. If every paper has one (same length) it replaces the built-in text embedding. */
   embedding?: number[];
+  /** Claims this paper takes a stance on. Claims with papers on both sides become conflict regions. */
+  findings?: Finding[];
 }
 
 export interface BuildOptions {
@@ -82,12 +98,14 @@ export interface ClusterInfo {
 }
 
 /**
- * A named area of space. The builder currently emits `kind: 'void'` regions for bridge gaps (two related
- * clusters that are barely linked); `nebula` is reserved for the renderer.
+ * A named area of space. The builder emits two kinds:
+ *   void      bridge gap: two related clusters that are barely linked (absence).
+ *   conflict  papers that take opposite stances on the same claim (disagreement); centred on those papers.
+ * `nebula` is reserved for the renderer.
  */
 export interface Region {
   id: string;
-  kind: 'void' | 'nebula';
+  kind: 'void' | 'nebula' | 'conflict';
   center: Vec3;
   radius: number;
   /** Month the region becomes visible, and (optionally) the month it closes. */
@@ -98,8 +116,12 @@ export interface Region {
   between?: [number, number];
   /** Bridge-gap voids: relatedness x (1 - link ratio), higher = stronger gap. */
   score?: number;
-  /** One-line, human-readable evidence for the gap. */
+  /** One-line, human-readable evidence for the gap or conflict. */
   evidence?: string;
+  /** Conflicts: the disputed claim (as first written in the collection). */
+  claim?: string;
+  /** Conflicts: ids of the papers on each side. */
+  sides?: { for: string[]; against: string[] };
 }
 
 export interface BuildStats {
@@ -144,6 +166,7 @@ export interface PaperDetails {
   url?: string;
   /** References that resolved to papers in the collection. */
   references?: string[];
+  findings?: Finding[];
 }
 
 /** Heavy per-paper fields, kept out of graph.json and loaded on selection. Keyed by node id. */

@@ -6,7 +6,7 @@ import { kb, num, summarizeGraph, summarizeTruth, writeJson } from './io.ts';
 
 const HELP = `One-shot demo: generate a synthetic collection, then build its graph.
 
-Usage: node src/cli/demo.ts [--papers n] [--topics n] [--seed n] [--voids n] [--pretty]
+Usage: node src/cli/demo.ts [--papers n] [--topics n] [--seed n] [--voids n] [--conflicts n] [--consensus n] [--pretty]
 
 Writes data/synthetic/{papers,truth}.json and public/data/{graph,details}.json.
 `;
@@ -18,6 +18,8 @@ try {
       topics: { type: 'string' },
       seed: { type: 'string' },
       voids: { type: 'string' },
+      conflicts: { type: 'string' },
+      consensus: { type: 'string' },
       pretty: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
@@ -33,6 +35,8 @@ try {
     ['topics', values.topics, 'topics'],
     ['seed', values.seed, 'seed'],
     ['voids', values.voids, 'voids'],
+    ['conflicts', values.conflicts, 'conflicts'],
+    ['consensus', values.consensus, 'consensus'],
   ] as const) {
     const v = num(raw, flag);
     if (v !== undefined) gen[key] = v;

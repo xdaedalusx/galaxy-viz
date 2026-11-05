@@ -40,6 +40,12 @@ use `npm run view`, or drop a `graph.json` (and optionally `details.json`) onto 
   are). Drag to look around, scroll to zoom. Left/right arrows step the timeline.
 - Click a star, a topic, or a void in the left panel. Voids are dashed dark regions between topic pairs;
   their panel shows the evidence and says the gap is within this collection.
+- Conflicts are swirling two-colour nebulae over papers that take opposite stances on the same claim
+  (blue = supports, rose = argues against, violet haze where they mix), with faint rose links between nearest
+  opposing papers. Clicking one recolours its papers by side and opens an analysis panel computed in the viewer
+  from `graph.json`: the split by paper count and by citations, a strip chart of both sides over time,
+  whether opinion has shifted (earliest vs most recent third of papers), and whether the two sides cite each
+  other or talk past each other (cross-side citations vs what mixing at random would give).
 - The Glow slider is the bloom strength; 0 turns it off ("clarity mode") and renders directly.
 - Cluster labels hide when they would overlap; zoom in to reveal more.
 
@@ -47,6 +53,10 @@ Not yet verified: the actual WebGL rendering. This was developed in a sandbox wi
 The UI logic, picking, data loading and escaping were tested in a browser against a three.js stand-in, and the
 shaders were compiled in a software WebGL context, but nobody has looked at the real picture yet. Expect to
 tune sizes, glow and link opacity (constants at the top of the shaders and in `buildGraphObjects`).
+
+Conflicts need `findings` on the papers (`{ claim, stance: "for" | "against", quote? }`); the generator plants
+some, and a real collection would need them extracted from the full text (an LLM step that is not built), with
+claims phrased identically to match. Without findings the Conflicts list is empty.
 
 ## Input
 

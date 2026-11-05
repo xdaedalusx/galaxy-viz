@@ -17,6 +17,7 @@ import { autoK, labelClusters, relabelBySize, sphericalKMeans } from './cluster.
 import { l2normalize, projectDocs } from './embed.ts';
 import { layout3d } from './layout.ts';
 import { similarityEdges } from './similarity.ts';
+import { detectConflicts } from './conflicts.ts';
 import { detectBridgeVoids } from './voids.ts';
 import { buildTfidf, paperSegments } from './text.ts';
 
@@ -200,7 +201,7 @@ export function buildGraph(input: PaperInput[], overrides: Partial<BuildOptions>
 
   // 7b. bridge-gap voids: clusters that read alike (similarity edges) but rarely cite each other.
   // Needs citation data to contrast against; without it no voids are reported (and a warning says so).
-  const { regions } = detectBridgeVoids({
+  const { regions: voidRegions } = detectBridgeVoids({
     labels,
     clusterCount,
     citationEdges: edges.filter((e) => e.type === 'citation'),
@@ -209,6 +210,15 @@ export function buildGraph(input: PaperInput[], overrides: Partial<BuildOptions>
     t: recs.map((r) => r.t),
     clusterLabels: clusters.map((c) => c.label),
   });
+
+  // 7c. conflicts: claims on which papers take opposite stances (needs `findings` on the papers).
+  const conflictRegions = detectConflicts({
+    ids: nodes.map((nd) => nd.id),
+    findings: recs.map((r) => r.p.findings),
+    t: recs.map((r) => r.t),
+    positions: pos,
+  });
+  const regions = [...voidRegions, ...conflictRegions];
 
   const details: DetailsFile = {};
   recs.forEach((r, i) => {
@@ -219,6 +229,7 @@ export function buildGraph(input: PaperInput[], overrides: Partial<BuildOptions>
     if (r.p.keywords?.length) d.keywords = r.p.keywords;
     if (r.p.doi) d.doi = r.p.doi;
     if (r.p.url) d.url = r.p.url;
+    if (r.p.findings?.length) d.findings = r.p.findings;
     const refs = (r.p.references ?? []).map(resolve).filter((j): j is number => j !== undefined && j !== i);
     if (refs.length) d.references = [...new Set(refs)].map((j) => recs[j].p.id);
     details[nodes[i].id] = d;

@@ -55,6 +55,10 @@ export function validateGraph(g: GraphData): string[] {
     if (!r.center.every(Number.isFinite) || !(r.radius > 0)) add(`region ${i}: bad center or radius`);
     if (r.t0 < g.meta.timeline.minT || r.t0 > g.meta.timeline.maxT) add(`region ${i}: t0 outside meta.timeline`);
     if (r.t1 !== undefined && r.t1 < r.t0) add(`region ${i}: t1 before t0`);
+    if (r.kind === 'conflict') {
+      if (!r.sides || r.sides.for.length === 0 || r.sides.against.length === 0) add(`region ${i}: conflict needs papers on both sides`);
+      else for (const id of [...r.sides.for, ...r.sides.against]) if (!ids.has(id)) add(`region ${i}: unknown paper ${id}`);
+    }
     if (r.between && (r.between[0] === r.between[1] || r.between.some((c) => c < 0 || c >= g.clusters.length))) add(`region ${i}: bad cluster pair`);
   });
   return errs;

@@ -31,9 +31,15 @@ export function summarizeGraph(g: GraphData): string {
   for (const c of g.clusters) {
     lines.push(`  #${String(c.id).padEnd(2)} ${String(c.size).padStart(4)} papers  from ${monthLabel(c.firstT)}  ${c.label}`);
   }
-  if (g.regions.length) {
+  const voids = g.regions.filter((r) => r.kind === 'void');
+  const conflicts = g.regions.filter((r) => r.kind === 'conflict');
+  if (voids.length) {
     lines.push('Voids (clusters that read alike but rarely cite each other)');
-    for (const r of g.regions) lines.push(`  ${r.id}  score ${r.score}  from ${monthLabel(r.t0)}  ${r.label}`);
+    for (const r of voids) lines.push(`  ${r.id}  score ${r.score}  from ${monthLabel(r.t0)}  ${r.label}`);
+  }
+  if (conflicts.length) {
+    lines.push('Conflicts (papers taking opposite stances on one claim)');
+    for (const r of conflicts) lines.push(`  ${r.id}  score ${r.score}  from ${monthLabel(r.t0)}  ${r.sides!.for.length} for / ${r.sides!.against.length} against  ${r.claim}`);
   }
   if (m.warnings.length) {
     lines.push('Warnings');
@@ -51,5 +57,7 @@ export function summarizeTruth(t: SyntheticTruth): string {
     if (tp.orphan) lines.push(`  orphan    ${tp.name}: mentioned as an open question in neighbouring papers, almost never studied`);
   }
   lines.push(`  bridged   ${t.bridged.length} adjacent topic pairs have hybrid papers and cross-citations`);
+  for (const c of t.conflicts) lines.push(`  conflict  "${c.claim}" (${c.pattern}): ${c.forIds.length} for / ${c.againstIds.length} against`);
+  for (const c of t.consensus) lines.push(`  consensus "${c.claim}": ${c.ids.length} papers, all agree (decoy)`);
   return lines.join('\n');
 }
